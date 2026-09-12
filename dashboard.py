@@ -33,8 +33,9 @@ state = {
 def add_log(message):
     state["logs"].append(message)
 
-    if len(state["logs"]) > 100:
-        state["logs"] = state["logs"][-100:]
+    # Behold de siste 200 loggene
+    if len(state["logs"]) > 200:
+        state["logs"] = state["logs"][-200:]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -52,7 +53,6 @@ async def dashboard():
         profit_class = "neutral"
         profit_sign = ""
 
-    # Trading-status
     if state["trading"]:
         trading_text = "ON (LIVE)"
         trading_class = "trading-on"
@@ -60,72 +60,136 @@ async def dashboard():
         trading_text = "OFF (DRY RUN)"
         trading_class = "trading-off"
 
+    # Lag console-innhold
+    logs_html = ""
+
+    for log_message in reversed(state["logs"]):
+        logs_html += (
+            f'<div class="log">{log_message}</div>'
+        )
+
+    if not logs_html:
+        logs_html = (
+            '<div class="empty-log">'
+            'Ingen logger ennå...'
+            '</div>'
+        )
+
     return f"""
 <!DOCTYPE html>
+
 <html lang="no">
 
 <head>
 
 <meta charset="UTF-8">
 
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<meta http-equiv="refresh" content="10">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
 
 <title>Firi ETH Trading Bot</title>
 
+<meta http-equiv="refresh" content="2">
+
 <style>
+
+* {{
+    box-sizing: border-box;
+}}
 
 body {{
     margin: 0;
     padding: 0;
-    background: #101114;
+
+    background: #0f1115;
     color: #f5f5f5;
-    font-family: Arial, sans-serif;
+
+    font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
 }}
 
 .container {{
+    max-width: 1600px;
+
+    margin: auto;
+
     padding: 20px;
 }}
 
-h1 {{
-    margin-top: 0;
+.header {{
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    margin-bottom: 20px;
 }}
 
-.status {{
-    float: right;
+h1 {{
+    margin: 0;
+
+    font-size: 28px;
+}}
+
+.bot-status {{
+    font-size: 14px;
+
+    font-weight: bold;
+
     color: #3ddc84;
-    font-size: 16px;
 }}
 
 .grid {{
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+
+    grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+
     gap: 14px;
-    margin-top: 20px;
+
+    margin-top: 14px;
 }}
 
 .card {{
-    background: #1b1e24;
-    border-radius: 10px;
+    background: #1a1d23;
+
+    border: 1px solid #292d35;
+
+    border-radius: 12px;
+
     padding: 20px;
+
+    min-width: 0;
 }}
 
 .card-title {{
-    color: #8f9aaa;
-    font-size: 13px;
-    text-transform: uppercase;
+    color: #8f98a8;
+
+    font-size: 12px;
+
+    font-weight: bold;
+
+    letter-spacing: 0.5px;
+
     margin-bottom: 10px;
 }}
 
 .value {{
-    font-size: 24px;
+    font-size: 25px;
+
     font-weight: bold;
+
+    word-break: break-word;
 }}
 
 .small {{
-    font-size: 14px;
-    color: #9da5b1;
+    color: #8f98a8;
+
+    font-size: 13px;
+
     margin-top: 7px;
 }}
 
@@ -150,68 +214,143 @@ h1 {{
 }}
 
 .signal {{
-    font-size: 24px;
+    font-size: 25px;
+
     font-weight: bold;
+
     color: #f0c75e;
+}}
+
+.trading-card {{
+    margin-bottom: 14px;
+}}
+
+.update {{
+    color: #8f98a8;
+
+    font-size: 13px;
+
+    margin-top: 8px;
 }}
 
 .section {{
     margin-top: 20px;
 }}
 
+.section-title {{
+    font-size: 20px;
+
+    font-weight: bold;
+
+    margin-bottom: 10px;
+}}
+
 .logs {{
     background: #050609;
-    border-radius: 8px;
+
+    border: 1px solid #292d35;
+
+    border-radius: 10px;
+
     padding: 15px;
-    height: 400px;
+
+    height: 450px;
+
     overflow-y: auto;
-    font-family: Consolas, monospace;
+
+    font-family:
+        Consolas,
+        "Courier New",
+        monospace;
+
     font-size: 12px;
-    line-height: 1.5;
+
+    line-height: 1.6;
+
+    white-space: normal;
 }}
 
 .log {{
-    margin-bottom: 3px;
+    padding: 2px 0;
+
+    border-bottom: 1px solid #111318;
+
+    color: #d7dbe2;
+}}
+
+.empty-log {{
+    color: #6f7785;
 }}
 
 .info {{
-    background: #1b1e24;
+    background: #1a1d23;
+
+    border: 1px solid #292d35;
+
     border-radius: 10px;
-    padding: 20px;
+
+    padding: 15px;
 }}
 
-@media (max-width: 1000px) {{
+@media (max-width: 1100px) {{
+
     .grid {{
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns:
+            repeat(2, minmax(0, 1fr));
     }}
+
 }}
 
 @media (max-width: 600px) {{
+
+    .container {{
+        padding: 10px;
+    }}
+
+    .header {{
+        display: block;
+    }}
+
+    .bot-status {{
+        margin-top: 8px;
+    }}
+
     .grid {{
         grid-template-columns: 1fr;
     }}
+
+    .logs {{
+        height: 350px;
+    }}
+
 }}
 
 </style>
 
 </head>
 
+
 <body>
 
 <div class="container">
 
-<h1>
-    Firi ETH Trading Bot
 
-    <span class="status">
+<div class="header">
+
+    <h1>
+        Firi ETH Trading Bot
+    </h1>
+
+    <div class="bot-status">
         ● {state["status"]}
-    </span>
-</h1>
+    </div>
+
+</div>
 
 
 <!-- TRADING STATUS -->
 
-<div class="card" style="margin-top: 20px;">
+<div class="card trading-card">
 
     <div class="card-title">
         TRADING STATUS
@@ -232,6 +371,7 @@ h1 {{
 
 <div class="grid">
 
+
     <div class="card">
 
         <div class="card-title">
@@ -243,11 +383,13 @@ h1 {{
         </div>
 
         <div class="small">
-            Bid: {state["bid"]:,.2f} kr
+            Bid:
+            {state["bid"]:,.2f} kr
         </div>
 
         <div class="small">
-            Ask: {state["ask"]:,.2f} kr
+            Ask:
+            {state["ask"]:,.2f} kr
         </div>
 
     </div>
@@ -264,7 +406,8 @@ h1 {{
         </div>
 
         <div class="small">
-            Verdi: {state["eth_value"]:,.2f} kr
+            Verdi:
+            {state["eth_value"]:,.2f} kr
         </div>
 
     </div>
@@ -303,12 +446,14 @@ h1 {{
 
     </div>
 
+
 </div>
 
 
 <!-- GEVINST / TAP -->
 
 <div class="grid">
+
 
     <div class="card">
 
@@ -321,7 +466,8 @@ h1 {{
         </div>
 
         <div class="small">
-            Siden start: 1 800 kr
+            Siden start:
+            1 800 kr
         </div>
 
     </div>
@@ -377,6 +523,7 @@ h1 {{
 
     </div>
 
+
 </div>
 
 
@@ -394,6 +541,10 @@ h1 {{
             {state["last_update"]}
         </div>
 
+        <div class="update">
+            Dashboard oppdateres hvert 2. sekund
+        </div>
+
     </div>
 
 </div>
@@ -403,23 +554,18 @@ h1 {{
 
 <div class="section">
 
-    <h2>Console</h2>
+    <div class="section-title">
+        Console
+    </div>
 
     <div class="logs">
 
-"""
-
-    logs_html = ""
-
-    for log in reversed(state["logs"]):
-        logs_html += f'<div class="log">{log}</div>'
-
-    return f"""
         {logs_html}
 
     </div>
 
 </div>
+
 
 </div>
 

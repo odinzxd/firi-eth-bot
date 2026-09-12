@@ -21,7 +21,10 @@ API_KEY = os.getenv("FIRI_API_KEY")
 CLIENT_ID = os.getenv("FIRI_CLIENT_ID")
 SECRET_KEY = os.getenv("FIRI_SECRET_KEY")
 
-MARKET = os.getenv("MARKET", "ETHNOK")
+MARKET = os.getenv(
+    "MARKET",
+    "ETHNOK"
+)
 
 DRY_RUN = os.getenv(
     "DRY_RUN",
@@ -39,6 +42,8 @@ STARTING_CAPITAL_NOK = 1800.0
 
 MAX_SPREAD_NOK = 100
 
+UPDATE_INTERVAL_SECONDS = 5
+
 
 # --------------------------------------------------
 # LOGGING
@@ -46,11 +51,16 @@ MAX_SPREAD_NOK = 100
 
 def log(message):
 
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    timestamp = datetime.now().strftime(
+        "%H:%M:%S"
+    )
 
     text = f"[{timestamp}] {message}"
 
-    print(text)
+    print(
+        text,
+        flush=True
+    )
 
     add_log(text)
 
@@ -59,15 +69,24 @@ def log(message):
 # FINN SALDO
 # --------------------------------------------------
 
-def find_balance(balances, currency):
+def find_balance(
+    balances,
+    currency
+):
 
-    if isinstance(balances, dict):
+    if isinstance(
+        balances,
+        dict
+    ):
 
         if currency in balances:
 
             value = balances[currency]
 
-            if isinstance(value, dict):
+            if isinstance(
+                value,
+                dict
+            ):
 
                 for key in [
                     "available",
@@ -79,21 +98,31 @@ def find_balance(balances, currency):
                     if key in value:
 
                         try:
-                            return float(value[key])
+
+                            return float(
+                                value[key]
+                            )
+
                         except (
                             ValueError,
                             TypeError
                         ):
+
                             pass
 
             try:
-                return float(value)
+
+                return float(
+                    value
+                )
 
             except (
                 ValueError,
                 TypeError
             ):
+
                 pass
+
 
         for key in [
             "balances",
@@ -109,14 +138,24 @@ def find_balance(balances, currency):
                 )
 
                 if result is not None:
+
                     return result
 
-    elif isinstance(balances, list):
+
+    elif isinstance(
+        balances,
+        list
+    ):
 
         for item in balances:
 
-            if not isinstance(item, dict):
+            if not isinstance(
+                item,
+                dict
+            ):
+
                 continue
+
 
             symbol = (
                 item.get("symbol")
@@ -125,11 +164,14 @@ def find_balance(balances, currency):
                 or item.get("code")
             )
 
+
             if (
                 str(symbol).upper()
                 != currency.upper()
             ):
+
                 continue
+
 
             for key in [
                 "available",
@@ -142,6 +184,7 @@ def find_balance(balances, currency):
                 if key in item:
 
                     try:
+
                         return float(
                             item[key]
                         )
@@ -150,7 +193,9 @@ def find_balance(balances, currency):
                         ValueError,
                         TypeError
                     ):
+
                         pass
+
 
     return 0.0
 
@@ -162,7 +207,7 @@ def find_balance(balances, currency):
 def start_dashboard():
 
     log(
-        "Starter dashboard på port 8080..."
+        "Starter dashboard..."
     )
 
     uvicorn.run(
@@ -209,6 +254,11 @@ async def main():
         f"{MAX_TRADE_NOK:.2f} kr"
     )
 
+    log(
+        f"Oppdateringsintervall: "
+        f"{UPDATE_INTERVAL_SECONDS} sek"
+    )
+
 
     # --------------------------------------------------
     # TRADING STATUS
@@ -230,7 +280,7 @@ async def main():
 
 
     # --------------------------------------------------
-    # SJEKK API-NØKLER
+    # API-SJEKK
     # --------------------------------------------------
 
     if not API_KEY:
@@ -241,6 +291,7 @@ async def main():
 
         return
 
+
     if not CLIENT_ID:
 
         log(
@@ -248,6 +299,7 @@ async def main():
         )
 
         return
+
 
     if not SECRET_KEY:
 
@@ -295,12 +347,14 @@ async def main():
 
 
             # --------------------------------------------------
-            # TEST API
+            # API TEST
             # --------------------------------------------------
 
             try:
 
-                api_time = await client.time()
+                api_time = (
+                    await client.time()
+                )
 
                 log(
                     f"API time OK: {api_time}"
@@ -309,7 +363,8 @@ async def main():
             except Exception as e:
 
                 log(
-                    f"Kunne ikke hente API time: {e}"
+                    f"Kunne ikke hente "
+                    f"API time: {e}"
                 )
 
 
@@ -318,6 +373,11 @@ async def main():
             # --------------------------------------------------
 
             while True:
+
+                loop_start = (
+                    datetime.now()
+                )
+
 
                 try:
 
@@ -330,10 +390,6 @@ async def main():
                         .markets_market_ticker(
                             MARKET
                         )
-                    )
-
-                    log(
-                        f"Ticker: {ticker}"
                     )
 
 
@@ -350,17 +406,16 @@ async def main():
                     )
 
 
-                    # Midtpris
                     price = (
                         bid + ask
                     ) / 2
 
 
                     log(
-                        f"Bid: {bid:,.2f} kr | "
-                        f"Ask: {ask:,.2f} kr | "
-                        f"Mid: {price:,.2f} kr | "
-                        f"Spread: {spread:,.2f} kr"
+                        f"ETH: {price:,.2f} kr | "
+                        f"Bid: {bid:,.2f} | "
+                        f"Ask: {ask:,.2f} | "
+                        f"Spread: {spread:,.2f}"
                     )
 
 
@@ -370,10 +425,6 @@ async def main():
 
                     balances = (
                         await client.balances()
-                    )
-
-                    log(
-                        f"Balances: {balances}"
                     )
 
 
@@ -389,12 +440,8 @@ async def main():
 
 
                     log(
-                        f"NOK saldo: "
-                        f"{nok:,.2f} kr"
-                    )
-
-                    log(
-                        f"ETH saldo: "
+                        f"Saldo: "
+                        f"{nok:,.2f} NOK | "
                         f"{eth:.8f} ETH"
                     )
 
@@ -423,14 +470,17 @@ async def main():
                         eth * price
                     )
 
+
                     portfolio_value = (
                         nok + eth_value
                     )
+
 
                     profit_nok = (
                         portfolio_value
                         - STARTING_CAPITAL_NOK
                     )
+
 
                     profit_percent = (
                         (
@@ -443,7 +493,7 @@ async def main():
 
 
                     # ------------------------------------------
-                    # OPPDATER DASHBOARD
+                    # DASHBOARD
                     # ------------------------------------------
 
                     state["price"] = price
@@ -492,14 +542,14 @@ async def main():
 
 
                     # ------------------------------------------
-                    # SPREAD-SJEKK
+                    # SPREAD
                     # ------------------------------------------
 
                     if spread > MAX_SPREAD_NOK:
 
                         log(
-                            f"ADVARSEL: Spread er "
-                            f"{spread:,.2f} kr."
+                            f"ADVARSEL: Spread "
+                            f"{spread:,.2f} kr"
                         )
 
                         log(
@@ -533,29 +583,39 @@ async def main():
                         )
 
 
-                    # ------------------------------------------
-                    # VENT
-                    # ------------------------------------------
-
-                    await asyncio.sleep(
-                        30
-                    )
-
-
                 except Exception as e:
 
                     log(
                         f"FEIL: "
-                        f"{type(e).__name__}: {e}"
+                        f"{type(e).__name__}: "
+                        f"{e}"
                     )
 
                     state["status"] = (
                         "ERROR"
                     )
 
-                    await asyncio.sleep(
-                        30
-                    )
+
+                # ------------------------------------------
+                # VENT TIL NESTE RUN
+                # ------------------------------------------
+
+                elapsed = (
+                    datetime.now()
+                    - loop_start
+                ).total_seconds()
+
+
+                sleep_time = max(
+                    0,
+                    UPDATE_INTERVAL_SECONDS
+                    - elapsed
+                )
+
+
+                await asyncio.sleep(
+                    sleep_time
+                )
 
 
     except Exception as e:
