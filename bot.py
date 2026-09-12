@@ -75,7 +75,27 @@ TEST_TRADING_ENABLED = (
     == "true"
 )
 
-TEST_TRADE_NOK = 1.0
+def positive_env_float(name, default):
+
+    try:
+
+        value = float(
+            os.getenv(
+                name,
+                str(default)
+            )
+        )
+
+        return value if value > 0 else default
+
+    except ValueError:
+
+        return default
+
+
+# Bruk separate beløp fordi minimum for salg ofte er høyere enn for kjøp.
+TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 1.0)
+TEST_SELL_NOK = positive_env_float("TEST_SELL_NOK", 10.0)
 
 
 # ============================================================
@@ -558,9 +578,15 @@ async def execute_test_order(
 
         return
 
-    amount = TEST_TRADE_NOK / price
+    test_trade_nok = (
+        TEST_BUY_NOK
+        if action == "buy"
+        else TEST_SELL_NOK
+    )
 
-    if action == "buy" and nok < TEST_TRADE_NOK:
+    amount = test_trade_nok / price
+
+    if action == "buy" and nok < test_trade_nok:
 
         state["test_order_status"] = "Testkjøp avbrutt: for lite NOK-saldo."
         state["test_order_result"] = ""
@@ -589,7 +615,7 @@ async def execute_test_order(
 
         state["test_order_status"] = (
             f"Test-{action} sendt til Firi: "
-            f"{TEST_TRADE_NOK:.2f} kr ved {price:.2f} kr."
+            f"{test_trade_nok:.2f} kr ved {price:.2f} kr."
         )
         state["test_order_result"] = str(response)[:500]
 

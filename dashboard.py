@@ -13,6 +13,23 @@ TEST_TRADING_ENABLED = (
 )
 TEST_TRADE_PASSWORD = os.getenv("TEST_TRADE_PASSWORD", "")
 
+
+def positive_env_float(name: str, default: float) -> float:
+
+    try:
+
+        value = float(os.getenv(name, str(default)))
+
+        return value if value > 0 else default
+
+    except ValueError:
+
+        return default
+
+
+TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 1.0)
+TEST_SELL_NOK = positive_env_float("TEST_SELL_NOK", 10.0)
+
 app = FastAPI()
 
 
@@ -713,15 +730,15 @@ h1 {{
 
         <div class="small">
             Testmodus: {"AKTIVERT" if TEST_TRADING_ENABLED else "AV"}
-            | Beløp: 1,00 kr
+            | Kjøp: {TEST_BUY_NOK:.2f} kr | Salg: {TEST_SELL_NOK:.2f} kr
         </div>
 
         <button class="test-button test-buy" onclick="requestTestOrder('buy')">
-            Testkjøp 1 kr
+            Testkjøp {TEST_BUY_NOK:.2f} kr
         </button>
 
         <button class="test-button test-sell" onclick="requestTestOrder('sell')">
-            Testselg ca. 1 kr
+            Testselg ca. {TEST_SELL_NOK:.2f} kr
         </button>
 
         <div class="small">
