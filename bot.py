@@ -755,6 +755,39 @@ async def main():
                             f"{type(history).__name__}"
                         )
 
+                        # Ekstra debug: vis et kort sammendrag av rå history-responsen
+                        try:
+                            if isinstance(history, dict):
+                                debug(
+                                    f"History dict keys: {list(history.keys())}"
+                                )
+                                # Vis eksempel på første nøkkelverdi
+                                first_key = next(iter(history), None)
+                                if first_key is not None:
+                                    sample = history[first_key]
+                                    debug(
+                                        f"Sample for key {first_key}: {type(sample).__name__}"
+                                    )
+
+                            elif isinstance(history, list):
+                                debug(
+                                    f"History list length: {len(history)}"
+                                )
+                                try:
+                                    debug(
+                                        f"History first items: {history[:5]}"
+                                    )
+                                except Exception:
+                                    debug("History sample: (could not stringify items)")
+
+                            else:
+                                debug(
+                                    f"History raw repr (truncated): {str(history)[:1000]}"
+                                )
+
+                        except Exception as e:
+                            debug(f"Could not introspect history: {e}")
+
                         price_history = (
                             build_minute_prices(
                                 history
