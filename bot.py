@@ -111,8 +111,11 @@ async def main():
                 log(f"Ticker: {ticker}")
 
                 # Firi ticker returneres normalt som et objekt med "last".
-                price = float(ticker["last"])
+                bid = float(ticker["bid"])
+                ask = float(ticker["ask"])
+                spread = float(ticker["spread"])
 
+price = (bid + ask) / 2
                 nok_balance = find_balance(
                     balances,
                     "NOK"
@@ -133,8 +136,11 @@ async def main():
                 dashboard.state["last_update"] = datetime.now().strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-
-                log(f"ETH/NOK: {price:,.2f}")
+                
+                log(f"ETH/NOK mid: {price:,.2f}")
+                log(f"Bid: {bid:,.2f}")
+                log(f"Ask: {ask:,.2f}")
+                log(f"Spread: {spread:,.2f} kr")                
                 log(f"NOK saldo: {nok_balance:,.2f}")
                 log(f"ETH saldo: {eth_balance:.8f}")
                 log(f"Signal: {signal.action}")
