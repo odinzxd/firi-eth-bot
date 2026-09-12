@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse
 from fastapi import HTTPException
 import os
 from typing import List
@@ -1180,3 +1180,108 @@ async def get_debug_file(fname: str):
     except Exception as e:
 
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug/latest")
+async def get_latest_debug_file():
+
+    debug_dir = os.path.join(os.getcwd(), "debug")
+
+    if not os.path.isdir(debug_dir):
+
+        raise HTTPException(status_code=404, detail="No debug directory")
+
+    files = [
+        f for f in os.listdir(debug_dir)
+        if os.path.isfile(os.path.join(debug_dir, f)) and not f.startswith(".")
+    ]
+
+    if not files:
+
+        raise HTTPException(status_code=404, detail="No debug files")
+
+    files.sort(reverse=True)
+
+    latest = files[0]
+
+    path = os.path.join(debug_dir, latest)
+
+    return FileResponse(path, media_type="application/json", filename=latest)
+
+
+@app.get("/debug/peek/{fname}")
+async def peek_debug_file(fname: str, lines: int = 50):
+
+    if ".." in fname or fname.startswith("/"):
+
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    debug_dir = os.path.join(os.getcwd(), "debug")
+
+    path = os.path.join(debug_dir, fname)
+
+    if not os.path.isfile(path):
+
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+
+            content = []
+
+            for _ in range(lines):
+
+                line = fh.readline()
+
+                if not line:
+
+                    break
+
+                content.append(line.rstrip("\n"))
+
+        return JSONResponse(content={"file": fname, "lines": content})
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/console")
+async def console():
+
+    # Samle feillogger og relevante tracebacks fra state
+    header = []
+
+    header.append(f"Error count: {state.get('error_count', 0)}")
+    header.append(f"Last error: {state.get('last_error', 'Ingen feil')}")
+    header.append("")
+
+    error_patterns = [
+        "FEIL",
+        "ERROR",
+        "TRACEBACK",
+        "Exception",
+        "Traceback",
+    ]
+
+    found = []
+
+    for entry in reversed(state.get("logs", [])):
+
+        for pat in error_patterns:
+
+            if pat in entry:
+
+                found.append(entry)
+
+                break
+
+    if not found:
+
+        found = ["Ingen feillogg funnet."]
+
+    text = "\n".join(header + found)
+
+    return PlainTextResponse(text)
