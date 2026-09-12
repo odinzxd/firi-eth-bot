@@ -94,8 +94,9 @@ def positive_env_float(name, default):
 
 
 # Bruk separate beløp fordi minimum for salg ofte er høyere enn for kjøp.
-TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 1.0)
+TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 10.0)
 TEST_SELL_NOK = positive_env_float("TEST_SELL_NOK", 10.0)
+FIRI_MIN_TEST_ORDER_NOK = 10.0
 
 
 # ============================================================
@@ -497,7 +498,7 @@ def build_minute_prices(
         return []
 
     # Siste trade i et minutt er minutts-candlets close.  Listen nedenfor
-    # fyller også minutter uten handler med forrige close, slik at RSI(14),
+    # fyller også minutter uten handler med forrige close, slik at momentum,
     # EMA og momentum faktisk måles i minutter og ikke i tilfeldige trades.
     buckets = {}
 
@@ -583,6 +584,19 @@ async def execute_test_order(
         if action == "buy"
         else TEST_SELL_NOK
     )
+
+    if test_trade_nok < FIRI_MIN_TEST_ORDER_NOK:
+
+        state["test_order_status"] = (
+            "Testordre avbrutt: Firi krever minst "
+            f"{FIRI_MIN_TEST_ORDER_NOK:.2f} kr."
+        )
+        state["test_order_result"] = (
+            "Øk TEST_BUY_NOK eller TEST_SELL_NOK i .env og start botten på nytt."
+        )
+        state["test_order_pending"] = False
+
+        return
 
     amount = test_trade_nok / price
 
@@ -1281,10 +1295,6 @@ async def main():
                     signal.reason
                 )
 
-                state["rsi"] = (
-                    signal.rsi
-                )
-
                 state["ema_fast"] = (
                     signal.ema_fast
                 )
@@ -1299,24 +1309,6 @@ async def main():
 
                 state["volatility"] = (
                     signal.volatility
-                )
-
-                state[
-                    "expected_profit_percent"
-                ] = (
-                    signal.expected_profit_percent
-                )
-
-                state[
-                    "estimated_cost_percent"
-                ] = (
-                    signal.estimated_cost_percent
-                )
-
-                state[
-                    "net_expected_percent"
-                ] = (
-                    signal.net_expected_percent
                 )
 
                 state["trend"] = (
@@ -1377,9 +1369,8 @@ async def main():
 
                 log(
                     f"INDIKATORER | "
-                    f"RSI {signal.rsi:.1f} | "
-                    f"EMA20 {signal.ema_fast:,.0f} | "
-                    f"EMA50 {signal.ema_slow:,.0f} | "
+                    f"EMA5 {signal.ema_fast:,.0f} | "
+                    f"EMA15 {signal.ema_slow:,.0f} | "
                     f"MOM {signal.momentum:+.2f}% | "
                     f"TREND {signal.trend}"
                 )
@@ -1391,16 +1382,6 @@ async def main():
                     f"SELL {signal.sell_score} | "
                     f"Signal {signal.action}"
                 )
-
-
-                log(
-                    f"KOSTNAD | "
-                    f"{signal.estimated_cost_percent:.2f}% | "
-                    f"Potensiell netto "
-                    f"{signal.net_expected_percent:+.2f}%"
-                )
-
-
                 # =================================================
                 # HANDELSFILTER
                 # =================================================

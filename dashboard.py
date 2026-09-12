@@ -27,7 +27,7 @@ def positive_env_float(name: str, default: float) -> float:
         return default
 
 
-TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 1.0)
+TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 10.0)
 TEST_SELL_NOK = positive_env_float("TEST_SELL_NOK", 10.0)
 
 app = FastAPI()
@@ -65,8 +65,6 @@ state = {
     "signal": "HOLD",
     "reason": "Starter...",
 
-    "rsi": 50.0,
-
     "ema_fast": 0.0,
     "ema_slow": 0.0,
 
@@ -77,11 +75,6 @@ state = {
 
     "buy_score": 0,
     "sell_score": 0,
-
-    # Kostnader
-    "expected_profit_percent": 0.0,
-    "estimated_cost_percent": 0.0,
-    "net_expected_percent": 0.0,
 
     # Historikk
     "history_points": 0,
@@ -906,10 +899,10 @@ h1 {{
 
         <div class="small">
             BUY:
-            {state["buy_score"]}/12
+            {state["buy_score"]}
             |
             SELL:
-            {state["sell_score"]}/12
+            {state["sell_score"]}
         </div>
 
     </div>
@@ -935,20 +928,7 @@ h1 {{
         <div class="indicator">
 
             <span class="indicator-name">
-                RSI 14
-            </span>
-
-            <span class="indicator-value">
-                {state["rsi"]:.2f}
-            </span>
-
-        </div>
-
-
-        <div class="indicator">
-
-            <span class="indicator-name">
-                EMA 20
+                EMA 5
             </span>
 
             <span class="indicator-value">
@@ -961,7 +941,7 @@ h1 {{
         <div class="indicator">
 
             <span class="indicator-name">
-                EMA 50
+                EMA 15
             </span>
 
             <span class="indicator-value">
@@ -1005,45 +985,6 @@ h1 {{
 
             <span class="indicator-value">
                 {state["volatility"]:.2f}%
-            </span>
-
-        </div>
-
-
-        <div class="indicator">
-
-            <span class="indicator-name">
-                Forventet bevegelse
-            </span>
-
-            <span class="indicator-value">
-                {state["expected_profit_percent"]:.2f}%
-            </span>
-
-        </div>
-
-
-        <div class="indicator">
-
-            <span class="indicator-name">
-                Estimert kostnad
-            </span>
-
-            <span class="indicator-value">
-                {state["estimated_cost_percent"]:.2f}%
-            </span>
-
-        </div>
-
-
-        <div class="indicator">
-
-            <span class="indicator-name">
-                Forventet netto
-            </span>
-
-            <span class="indicator-value">
-                {state["net_expected_percent"]:+.2f}%
             </span>
 
         </div>
