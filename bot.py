@@ -22,55 +22,91 @@ CLIENT_ID = os.getenv("FIRI_CLIENT_ID")
 SECRET_KEY = os.getenv("FIRI_SECRET_KEY")
 
 MARKET = os.getenv("MARKET", "ETHNOK")
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
-MAX_TRADE_NOK = float(os.getenv("MAX_TRADE_NOK", "200"))
+DRY_RUN = os.getenv(
+    "DRY_RUN",
+    "true"
+).lower() == "true"
 
-# Maks tillatt spread før boten nekter å handle
+MAX_TRADE_NOK = float(
+    os.getenv(
+        "MAX_TRADE_NOK",
+        "200"
+    )
+)
+
+STARTING_CAPITAL_NOK = 1800.0
+
 MAX_SPREAD_NOK = 100
 
 
 # --------------------------------------------------
-# HJELPEFUNKSJONER
+# LOGGING
 # --------------------------------------------------
 
 def log(message):
+
     timestamp = datetime.now().strftime("%H:%M:%S")
+
     text = f"[{timestamp}] {message}"
 
     print(text)
+
     add_log(text)
 
 
+# --------------------------------------------------
+# FINN SALDO
+# --------------------------------------------------
+
 def find_balance(balances, currency):
-    """
-    Prøver å finne saldo for en valuta.
-    Håndterer forskjellige mulige formater fra API-et.
-    """
 
     if isinstance(balances, dict):
-        # Dersom API-et returnerer:
-        # {"NOK": {...}, "ETH": {...}}
+
         if currency in balances:
+
             value = balances[currency]
 
             if isinstance(value, dict):
-                for key in ["available", "balance", "amount", "free"]:
+
+                for key in [
+                    "available",
+                    "balance",
+                    "amount",
+                    "free"
+                ]:
+
                     if key in value:
+
                         try:
                             return float(value[key])
-                        except (ValueError, TypeError):
+                        except (
+                            ValueError,
+                            TypeError
+                        ):
                             pass
 
             try:
                 return float(value)
-            except (ValueError, TypeError):
+
+            except (
+                ValueError,
+                TypeError
+            ):
                 pass
 
-        # Dersom saldoene ligger i en liste
-        for key in ["balances", "data", "result"]:
+        for key in [
+            "balances",
+            "data",
+            "result"
+        ]:
+
             if key in balances:
-                result = find_balance(balances[key], currency)
+
+                result = find_balance(
+                    balances[key],
+                    currency
+                )
 
                 if result is not None:
                     return result
@@ -89,7 +125,10 @@ def find_balance(balances, currency):
                 or item.get("code")
             )
 
-            if str(symbol).upper() != currency.upper():
+            if (
+                str(symbol).upper()
+                != currency.upper()
+            ):
                 continue
 
             for key in [
@@ -97,12 +136,20 @@ def find_balance(balances, currency):
                 "balance",
                 "amount",
                 "free",
-                "available_balance",
+                "available_balance"
             ]:
+
                 if key in item:
+
                     try:
-                        return float(item[key])
-                    except (ValueError, TypeError):
+                        return float(
+                            item[key]
+                        )
+
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
                         pass
 
     return 0.0
@@ -113,12 +160,20 @@ def find_balance(balances, currency):
 # --------------------------------------------------
 
 def start_dashboard():
-    log("Starter dashboard på port 8080...")
+
+    log(
+        "Starter dashboard på port 8080..."
+    )
 
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8080")),
+        port=int(
+            os.getenv(
+                "PORT",
+                "8080"
+            )
+        ),
         log_level="info",
     )
 
@@ -129,37 +184,102 @@ def start_dashboard():
 
 async def main():
 
-    log("====================================")
-    log("FIRI ETH BOT STARTER")
-    log("====================================")
+    log(
+        "===================================="
+    )
 
-    log(f"Market: {MARKET}")
-    log(f"DRY_RUN: {DRY_RUN}")
-    log(f"Maks handel: {MAX_TRADE_NOK:.2f} kr")
+    log(
+        "FIRI ETH BOT STARTER"
+    )
+
+    log(
+        "===================================="
+    )
+
+    log(
+        f"Market: {MARKET}"
+    )
+
+    log(
+        f"DRY_RUN: {DRY_RUN}"
+    )
+
+    log(
+        f"Maks handel: "
+        f"{MAX_TRADE_NOK:.2f} kr"
+    )
+
+
+    # --------------------------------------------------
+    # TRADING STATUS
+    # --------------------------------------------------
+
+    state["trading"] = not DRY_RUN
+
+    if DRY_RUN:
+
+        log(
+            "TRADING: OFF - DRY RUN"
+        )
+
+    else:
+
+        log(
+            "TRADING: ON - LIVE TRADING"
+        )
+
+
+    # --------------------------------------------------
+    # SJEKK API-NØKLER
+    # --------------------------------------------------
 
     if not API_KEY:
-        log("FEIL: FIRI_API_KEY mangler.")
+
+        log(
+            "FEIL: FIRI_API_KEY mangler."
+        )
+
         return
 
     if not CLIENT_ID:
-        log("FEIL: FIRI_CLIENT_ID mangler.")
+
+        log(
+            "FEIL: FIRI_CLIENT_ID mangler."
+        )
+
         return
 
     if not SECRET_KEY:
-        log("FEIL: FIRI_SECRET_KEY mangler.")
+
+        log(
+            "FEIL: FIRI_SECRET_KEY mangler."
+        )
+
         return
 
-    # Start dashboard i egen tråd
+
+    # --------------------------------------------------
+    # START DASHBOARD
+    # --------------------------------------------------
+
     dashboard_thread = threading.Thread(
         target=start_dashboard,
-        daemon=True,
+        daemon=True
     )
 
     dashboard_thread.start()
 
     await asyncio.sleep(2)
 
-    log("Kobler til Firi API...")
+
+    log(
+        "Kobler til Firi API..."
+    )
+
+
+    # --------------------------------------------------
+    # FIRI
+    # --------------------------------------------------
 
     try:
 
@@ -169,14 +289,29 @@ async def main():
             client_id=CLIENT_ID,
         ) as client:
 
-            log("Firi API tilkoblet.")
+            log(
+                "Firi API tilkoblet."
+            )
 
-            # Test API-klokken
+
+            # --------------------------------------------------
+            # TEST API
+            # --------------------------------------------------
+
             try:
+
                 api_time = await client.time()
-                log(f"API time OK: {api_time}")
+
+                log(
+                    f"API time OK: {api_time}"
+                )
+
             except Exception as e:
-                log(f"Kunne ikke hente API time: {e}")
+
+                log(
+                    f"Kunne ikke hente API time: {e}"
+                )
+
 
             # --------------------------------------------------
             # HOVEDLOOP
@@ -186,20 +321,40 @@ async def main():
 
                 try:
 
-                    # ------------------------------
-                    # HENT ETH PRIS
-                    # ------------------------------
+                    # ------------------------------------------
+                    # HENT TICKER
+                    # ------------------------------------------
 
-                    ticker = await client.markets_market_ticker(MARKET)
+                    ticker = (
+                        await client
+                        .markets_market_ticker(
+                            MARKET
+                        )
+                    )
 
-                    log(f"Ticker: {ticker}")
+                    log(
+                        f"Ticker: {ticker}"
+                    )
 
-                    bid = float(ticker["bid"])
-                    ask = float(ticker["ask"])
-                    spread = float(ticker["spread"])
 
-                    # Midt mellom kjøps- og salgspris
-                    price = (bid + ask) / 2
+                    bid = float(
+                        ticker["bid"]
+                    )
+
+                    ask = float(
+                        ticker["ask"]
+                    )
+
+                    spread = float(
+                        ticker["spread"]
+                    )
+
+
+                    # Midtpris
+                    price = (
+                        bid + ask
+                    ) / 2
+
 
                     log(
                         f"Bid: {bid:,.2f} kr | "
@@ -208,48 +363,137 @@ async def main():
                         f"Spread: {spread:,.2f} kr"
                     )
 
-                    # ------------------------------
+
+                    # ------------------------------------------
                     # HENT SALDO
-                    # ------------------------------
+                    # ------------------------------------------
 
-                    balances = await client.balances()
-
-                    log(f"Balances: {balances}")
-
-                    nok = find_balance(balances, "NOK")
-                    eth = find_balance(balances, "ETH")
-
-                    log(f"NOK saldo: {nok:,.2f} kr")
-                    log(f"ETH saldo: {eth:.8f} ETH")
-
-                    # ------------------------------
-                    # STRATEGI
-                    # ------------------------------
-
-                    signal = get_signal(price)
+                    balances = (
+                        await client.balances()
+                    )
 
                     log(
-                        f"Signal: {signal.action} - "
+                        f"Balances: {balances}"
+                    )
+
+
+                    nok = find_balance(
+                        balances,
+                        "NOK"
+                    )
+
+                    eth = find_balance(
+                        balances,
+                        "ETH"
+                    )
+
+
+                    log(
+                        f"NOK saldo: "
+                        f"{nok:,.2f} kr"
+                    )
+
+                    log(
+                        f"ETH saldo: "
+                        f"{eth:.8f} ETH"
+                    )
+
+
+                    # ------------------------------------------
+                    # STRATEGI
+                    # ------------------------------------------
+
+                    signal = get_signal(
+                        price
+                    )
+
+
+                    log(
+                        f"Signal: "
+                        f"{signal.action} - "
                         f"{signal.reason}"
                     )
 
-                    # ------------------------------
-                    # DASHBOARD DATA
-                    # ------------------------------
+
+                    # ------------------------------------------
+                    # PORTEFØLJE
+                    # ------------------------------------------
+
+                    eth_value = (
+                        eth * price
+                    )
+
+                    portfolio_value = (
+                        nok + eth_value
+                    )
+
+                    profit_nok = (
+                        portfolio_value
+                        - STARTING_CAPITAL_NOK
+                    )
+
+                    profit_percent = (
+                        (
+                            profit_nok
+                            / STARTING_CAPITAL_NOK
+                        ) * 100
+                        if STARTING_CAPITAL_NOK > 0
+                        else 0
+                    )
+
+
+                    # ------------------------------------------
+                    # OPPDATER DASHBOARD
+                    # ------------------------------------------
 
                     state["price"] = price
+
+                    state["bid"] = bid
+                    state["ask"] = ask
+                    state["spread"] = spread
+
                     state["nok"] = nok
                     state["eth"] = eth
-                    state["signal"] = signal.action
-                    state["reason"] = signal.reason
-                    state["last_update"] = datetime.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    state["status"] = "RUNNING"
 
-                    # ------------------------------
+                    state["eth_value"] = (
+                        eth_value
+                    )
+
+                    state["portfolio_value"] = (
+                        portfolio_value
+                    )
+
+                    state["profit_nok"] = (
+                        profit_nok
+                    )
+
+                    state["profit_percent"] = (
+                        profit_percent
+                    )
+
+                    state["signal"] = (
+                        signal.action
+                    )
+
+                    state["reason"] = (
+                        signal.reason
+                    )
+
+                    state["last_update"] = (
+                        datetime.now()
+                        .strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+                    )
+
+                    state["status"] = (
+                        "RUNNING"
+                    )
+
+
+                    # ------------------------------------------
                     # SPREAD-SJEKK
-                    # ------------------------------
+                    # ------------------------------------------
 
                     if spread > MAX_SPREAD_NOK:
 
@@ -259,13 +503,14 @@ async def main():
                         )
 
                         log(
-                            "Ingen handel tillatt på grunn "
-                            "av høy spread."
+                            "Ingen handel tillatt "
+                            "på grunn av høy spread."
                         )
 
-                    # ------------------------------
+
+                    # ------------------------------------------
                     # DRY RUN
-                    # ------------------------------
+                    # ------------------------------------------
 
                     elif DRY_RUN:
 
@@ -274,32 +519,44 @@ async def main():
                             "Ingen ordre blir sendt."
                         )
 
-                    # ------------------------------
-                    # LIVE TRADING
-                    # ------------------------------
+
+                    # ------------------------------------------
+                    # LIVE
+                    # ------------------------------------------
 
                     else:
 
                         log(
-                            "LIVE MODE: Handelslogikk er "
+                            "LIVE MODE: "
+                            "Handelslogikk er "
                             "ikke aktivert ennå."
                         )
 
-                    # ------------------------------
-                    # VENT
-                    # ------------------------------
 
-                    await asyncio.sleep(30)
+                    # ------------------------------------------
+                    # VENT
+                    # ------------------------------------------
+
+                    await asyncio.sleep(
+                        30
+                    )
+
 
                 except Exception as e:
 
                     log(
-                        f"FEIL: {type(e).__name__}: {e}"
+                        f"FEIL: "
+                        f"{type(e).__name__}: {e}"
                     )
 
-                    state["status"] = "ERROR"
+                    state["status"] = (
+                        "ERROR"
+                    )
 
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(
+                        30
+                    )
+
 
     except Exception as e:
 
@@ -308,7 +565,9 @@ async def main():
             f"{type(e).__name__}: {e}"
         )
 
-        state["status"] = "ERROR"
+        state["status"] = (
+            "ERROR"
+        )
 
 
 # --------------------------------------------------
@@ -316,4 +575,7 @@ async def main():
 # --------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    asyncio.run(
+        main()
+    )
