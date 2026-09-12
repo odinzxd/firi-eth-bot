@@ -1,8 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, PlainTextResponse
-from fastapi import HTTPException
 import os
+import secrets
+from html import escape
 from typing import List
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TEST_TRADING_ENABLED = (
+    os.getenv("TEST_TRADING_ENABLED", "false").lower() == "true"
+)
+TEST_TRADE_PASSWORD = os.getenv("TEST_TRADE_PASSWORD", "")
 
 app = FastAPI()
 
@@ -74,6 +83,12 @@ state = {
 
     # Console
     "logs": [],
+
+    # Manuelle testordrer. Selve ordreutførelsen skjer i bot.py.
+    "test_order_request": None,
+    "test_order_pending": False,
+    "test_order_status": "Testhandel er deaktivert.",
+    "test_order_result": "",
 }
 
 
@@ -559,6 +574,39 @@ h1 {{
 }}
 
 
+.test-button {{
+
+    border: 0;
+
+    border-radius: 8px;
+
+    color: #ffffff;
+
+    cursor: pointer;
+
+    font-weight: bold;
+
+    margin: 8px 8px 0 0;
+
+    padding: 10px 14px;
+
+}}
+
+
+.test-buy {{
+
+    background: #197b45;
+
+}}
+
+
+.test-sell {{
+
+    background: #a93e3e;
+
+}}
+
+
 @media (max-width: 1100px) {{
 
     .grid,
@@ -646,6 +694,44 @@ h1 {{
     <div class="small">
         DRY_RUN =
         {str(not state["trading"]).lower()}
+    </div>
+
+</div>
+
+
+<!-- ===================================================== -->
+<!-- MANUELL TESTHANDEL -->
+<!-- ===================================================== -->
+
+<div class="section">
+
+    <div class="section-title">
+        Manuell testhandel
+    </div>
+
+    <div class="card">
+
+        <div class="small">
+            Testmodus: {"AKTIVERT" if TEST_TRADING_ENABLED else "AV"}
+            | Beløp: 1,00 kr
+        </div>
+
+        <button class="test-button test-buy" onclick="requestTestOrder('buy')">
+            Testkjøp 1 kr
+        </button>
+
+        <button class="test-button test-sell" onclick="requestTestOrder('sell')">
+            Testselg ca. 1 kr
+        </button>
+
+        <div class="small">
+            {escape(str(state["test_order_status"]))}
+        </div>
+
+        <div class="small">
+            {escape(str(state["test_order_result"]))}
+        </div>
+
     </div>
 
 </div>
@@ -1128,10 +1214,93 @@ h1 {{
 
 </div>
 
+
+<script>
+
+async function requestTestOrder(action) {{
+
+    const password = window.prompt(
+        'Skriv testpassordet for å sende en ekte ' + action + '-ordre.'
+    );
+
+    if (password === null) {{
+
+        return;
+
+    }}
+
+    const response = await fetch('/test-order', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{action: action, password: password}})
+    }});
+
+    const result = await response.json();
+
+    window.alert(
+        result.message || result.detail || 'Ukjent svar fra testhandel.'
+    );
+
+    window.location.reload();
+
+}}
+
+</script>
+
 </body>
 
 </html>
 """
+
+
+@app.post("/test-order")
+async def queue_test_order(request: Request) -> JSONResponse:
+
+    if not TEST_TRADING_ENABLED:
+
+        raise HTTPException(
+            status_code=403,
+            detail="Testhandel er deaktivert. Sett TEST_TRADING_ENABLED=true."
+        )
+
+    if not TEST_TRADE_PASSWORD:
+
+        raise HTTPException(
+            status_code=503,
+            detail="TEST_TRADE_PASSWORD mangler."
+        )
+
+    try:
+
+        payload = await request.json()
+
+    except ValueError:
+
+        raise HTTPException(status_code=400, detail="Ugyldig forespørsel.")
+
+    action = str(payload.get("action", "")).lower()
+    password = str(payload.get("password", ""))
+
+    if action not in {"buy", "sell"}:
+
+        raise HTTPException(status_code=400, detail="Ugyldig testhandling.")
+
+    if not secrets.compare_digest(password, TEST_TRADE_PASSWORD):
+
+        raise HTTPException(status_code=401, detail="Feil testpassord.")
+
+    if state["test_order_pending"]:
+
+        raise HTTPException(status_code=409, detail="En testordre behandles allerede.")
+
+    state["test_order_request"] = action
+    state["test_order_pending"] = True
+    state["test_order_status"] = f"Test-{action} ligger i kø."
+    state["test_order_result"] = "Venter på at botten sender ordren til Firi."
+
+    add_log(f"Manuell test-{action} lagt i kø.")
+
+    return JSONResponse(content={"message": "Testordre lagt i kø."})
 
 
 

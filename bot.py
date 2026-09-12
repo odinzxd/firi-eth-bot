@@ -65,6 +65,18 @@ MAX_TRADE_NOK = float(
 
 STARTING_CAPITAL_NOK = 1800.0
 
+# Ekte testordrer er avslått til denne variabelen eksplisitt settes til true.
+# Passordet valideres i dashboard.py før en ordre blir lagt i kø.
+TEST_TRADING_ENABLED = (
+    os.getenv(
+        "TEST_TRADING_ENABLED",
+        "false"
+    ).lower()
+    == "true"
+)
+
+TEST_TRADE_NOK = 1.0
+
 
 # ============================================================
 # TIDSINTERVALLER
@@ -516,6 +528,89 @@ def build_minute_prices(
 
 
 # ============================================================
+# MANUELL TESTORDRE
+# ============================================================
+
+async def execute_test_order(
+    client,
+    action,
+    bid,
+    ask,
+    nok,
+    eth
+):
+
+    if not TEST_TRADING_ENABLED:
+
+        state["test_order_status"] = "Testhandel er deaktivert."
+        state["test_order_result"] = ""
+        state["test_order_pending"] = False
+
+        return
+
+    price = ask if action == "buy" else bid
+
+    if price <= 0:
+
+        state["test_order_status"] = "Testordre avbrutt: ugyldig ticker-pris."
+        state["test_order_result"] = ""
+        state["test_order_pending"] = False
+
+        return
+
+    amount = TEST_TRADE_NOK / price
+
+    if action == "buy" and nok < TEST_TRADE_NOK:
+
+        state["test_order_status"] = "Testkjøp avbrutt: for lite NOK-saldo."
+        state["test_order_result"] = ""
+        state["test_order_pending"] = False
+
+        return
+
+    if action == "sell" and eth < amount:
+
+        state["test_order_status"] = "Testselg avbrutt: for lite ETH-saldo."
+        state["test_order_result"] = ""
+        state["test_order_pending"] = False
+
+        return
+
+    order_type = "bid" if action == "buy" else "ask"
+
+    try:
+
+        response = await client.post_orders(
+            MARKET,
+            order_type,
+            f"{price:.2f}",
+            f"{amount:.12f}"
+        )
+
+        state["test_order_status"] = (
+            f"Test-{action} sendt til Firi: "
+            f"{TEST_TRADE_NOK:.2f} kr ved {price:.2f} kr."
+        )
+        state["test_order_result"] = str(response)[:500]
+
+        log(
+            f"TESTORDRE sendt | {action.upper()} | "
+            f"{amount:.12f} ETH @ {price:.2f}"
+        )
+
+    except Exception as e:
+
+        state["test_order_status"] = f"Test-{action} ble avvist eller feilet."
+        state["test_order_result"] = str(e)[:500]
+
+        log_error("TEST ORDER", e)
+
+    finally:
+
+        state["test_order_pending"] = False
+
+
+# ============================================================
 # DASHBOARD
 # ============================================================
 
@@ -589,6 +684,14 @@ async def main():
     # ========================================================
 
     state["trading"] = not DRY_RUN
+
+    if TEST_TRADING_ENABLED:
+
+        state["test_order_status"] = "Klar for passordbeskyttet testhandel."
+
+    else:
+
+        state["test_order_status"] = "Testhandel er deaktivert."
 
     if DRY_RUN:
 
@@ -763,6 +866,21 @@ async def main():
                     last_price = price
 
                     last_ticker_ok = True
+
+                    test_action = state.get("test_order_request")
+
+                    if test_action:
+
+                        state["test_order_request"] = None
+
+                        await execute_test_order(
+                            client,
+                            test_action,
+                            bid,
+                            ask,
+                            nok,
+                            eth
+                        )
 
                     log(
                         f"ETH "
