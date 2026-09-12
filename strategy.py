@@ -74,32 +74,27 @@ def calculate_rsi(
     if len(prices) < period + 1:
         return None
 
-    recent = prices[-(period + 1):]
+    # Wilder-RSI bruker hele den kronologiske serien.  Et enkelt snitt av
+    # bare de siste 14 endringene gir merkbart andre verdier enn TradingView
+    # og de fleste andre chart-tjenester.
+    changes = [
+        prices[i] - prices[i - 1]
+        for i in range(1, len(prices))
+    ]
 
-    gains = []
-    losses = []
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
 
-    for i in range(1, len(recent)):
+    average_gain = sum(gains[:period]) / period
+    average_loss = sum(losses[:period]) / period
 
-        change = (
-            recent[i]
-            - recent[i - 1]
-        )
+    for gain, loss in zip(gains[period:], losses[period:]):
+        average_gain = ((average_gain * (period - 1)) + gain) / period
+        average_loss = ((average_loss * (period - 1)) + loss) / period
 
-        if change > 0:
-            gains.append(change)
-            losses.append(0.0)
-        else:
-            gains.append(0.0)
-            losses.append(abs(change))
-
-    average_gain = (
-        sum(gains) / period
-    )
-
-    average_loss = (
-        sum(losses) / period
-    )
+    # En helt flat serie er verken overkjøpt eller oversolgt.
+    if average_loss == 0 and average_gain == 0:
+        return 50.0
 
     if average_loss == 0:
         return 100.0

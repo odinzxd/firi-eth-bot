@@ -387,14 +387,29 @@ def extract_trades(
                         TypeError
                     ):
 
-                        pass
+                        # Firi kan returnere ISO-8601-tid, for eksempel
+                        # "2026-09-12T10:15:00Z", i stedet for Unix-tid.
+                        if isinstance(candidate, str):
+
+                            try:
+
+                                timestamp = datetime.fromisoformat(
+                                    candidate.replace("Z", "+00:00")
+                                ).timestamp()
+
+                                break
+
+                            except ValueError:
+
+                                pass
 
             if (
                 price is not None
                 and timestamp is not None
             ):
 
-                if timestamp > 10_000_000_000:
+                # Aksepter sekunder, millisekunder og mikrosekunder.
+                while timestamp > 10_000_000_000:
 
                     timestamp /= 1000.0
 
@@ -449,6 +464,9 @@ def build_minute_prices(
 
         return []
 
+    # Siste trade i et minutt er minutts-candlets close.  Listen nedenfor
+    # fyller også minutter uten handler med forrige close, slik at RSI(14),
+    # EMA og momentum faktisk måles i minutter og ikke i tilfeldige trades.
     buckets = {}
 
     for timestamp, price in trades:
@@ -459,16 +477,42 @@ def build_minute_prices(
 
         buckets[minute] = price
 
-    prices = [
-        buckets[key]
-        for key in sorted(
-            buckets.keys()
-        )
+    last_minute = max(buckets)
+    first_minute = max(
+        min(buckets),
+        last_minute - MAX_PRICE_HISTORY + 1
+    )
+
+    previous_minutes = [
+        minute
+        for minute in buckets
+        if minute <= first_minute
     ]
 
-    return prices[
-        -MAX_PRICE_HISTORY:
-    ]
+    if not previous_minutes:
+
+        return []
+
+    close = buckets[max(previous_minutes)]
+    prices = []
+
+    for minute in range(first_minute, last_minute + 1):
+
+        if minute in buckets:
+
+            close = buckets[minute]
+
+        prices.append(close)
+
+    debug(
+        "Candles: "
+        f"{len(prices)} x 1 min "
+        f"({datetime.fromtimestamp(first_minute * 60).isoformat()} -> "
+        f"{datetime.fromtimestamp(last_minute * 60).isoformat()}); "
+        f"trades={len(trades)}"
+    )
+
+    return prices
 
 
 # ============================================================
