@@ -24,6 +24,18 @@ state = {
     "signal": "HOLD",
     "reason": "Starter...",
 
+    "rsi": 50.0,
+    "ema_fast": 0.0,
+    "ema_slow": 0.0,
+    "momentum": 0.0,
+    "volatility": 0.0,
+
+    "expected_profit_percent": 0.0,
+    "estimated_cost_percent": 0.0,
+    "net_expected_percent": 0.0,
+
+    "history_points": 0,
+
     "last_update": "-",
 
     "logs": [],
@@ -31,49 +43,91 @@ state = {
 
 
 def add_log(message):
-    state["logs"].append(message)
 
-    # Behold de siste 200 loggene
-    if len(state["logs"]) > 200:
-        state["logs"] = state["logs"][-200:]
+    state["logs"].append(
+        message
+    )
+
+    if len(state["logs"]) > 300:
+
+        state["logs"] = (
+            state["logs"][-300:]
+        )
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get(
+    "/",
+    response_class=HTMLResponse
+)
 async def dashboard():
 
-    profit = state["profit_nok"]
+    profit = (
+        state["profit_nok"]
+    )
 
     if profit > 0:
+
         profit_class = "profit"
         profit_sign = "+"
+
     elif profit < 0:
+
         profit_class = "loss"
         profit_sign = ""
+
     else:
+
         profit_class = "neutral"
         profit_sign = ""
 
+
     if state["trading"]:
+
         trading_text = "ON (LIVE)"
         trading_class = "trading-on"
+
     else:
+
         trading_text = "OFF (DRY RUN)"
         trading_class = "trading-off"
 
-    # Lag console-innhold
+
+    signal = state["signal"]
+
+    if signal.startswith("BUY"):
+
+        signal_class = "signal-buy"
+
+    elif signal.startswith("SELL"):
+
+        signal_class = "signal-sell"
+
+    else:
+
+        signal_class = "signal-hold"
+
+
     logs_html = ""
 
-    for log_message in reversed(state["logs"]):
+    for log_message in reversed(
+        state["logs"]
+    ):
+
         logs_html += (
-            f'<div class="log">{log_message}</div>'
+            f'<div class="log">'
+            f'{log_message}'
+            f'</div>'
         )
 
+
     if not logs_html:
+
         logs_html = (
             '<div class="empty-log">'
             'Ingen logger ennå...'
             '</div>'
         )
+
 
     return f"""
 <!DOCTYPE html>
@@ -88,8 +142,6 @@ async def dashboard():
       content="width=device-width, initial-scale=1.0">
 
 <title>Firi ETH Trading Bot</title>
-
-<meta http-equiv="refresh" content="2">
 
 <style>
 
@@ -112,17 +164,13 @@ body {{
 
 .container {{
     max-width: 1600px;
-
     margin: auto;
-
     padding: 20px;
 }}
 
 .header {{
     display: flex;
-
     justify-content: space-between;
-
     align-items: center;
 
     margin-bottom: 20px;
@@ -130,16 +178,13 @@ body {{
 
 h1 {{
     margin: 0;
-
     font-size: 28px;
 }}
 
 .bot-status {{
-    font-size: 14px;
-
-    font-weight: bold;
-
     color: #3ddc84;
+    font-size: 14px;
+    font-weight: bold;
 }}
 
 .grid {{
@@ -161,8 +206,6 @@ h1 {{
     border-radius: 12px;
 
     padding: 20px;
-
-    min-width: 0;
 }}
 
 .card-title {{
@@ -181,8 +224,6 @@ h1 {{
     font-size: 25px;
 
     font-weight: bold;
-
-    word-break: break-word;
 }}
 
 .small {{
@@ -213,24 +254,21 @@ h1 {{
     color: #ff5c5c;
 }}
 
-.signal {{
-    font-size: 25px;
+.signal-buy {{
+    color: #3ddc84;
+}}
 
-    font-weight: bold;
+.signal-sell {{
+    color: #ff5c5c;
+}}
 
+.signal-hold {{
     color: #f0c75e;
 }}
 
-.trading-card {{
-    margin-bottom: 14px;
-}}
-
-.update {{
-    color: #8f98a8;
-
-    font-size: 13px;
-
-    margin-top: 8px;
+.signal {{
+    font-size: 25px;
+    font-weight: bold;
 }}
 
 .section {{
@@ -239,9 +277,7 @@ h1 {{
 
 .section-title {{
     font-size: 20px;
-
     font-weight: bold;
-
     margin-bottom: 10px;
 }}
 
@@ -266,16 +302,13 @@ h1 {{
     font-size: 12px;
 
     line-height: 1.6;
-
-    white-space: normal;
 }}
 
 .log {{
-    padding: 2px 0;
+    padding: 3px 0;
 
-    border-bottom: 1px solid #111318;
-
-    color: #d7dbe2;
+    border-bottom:
+        1px solid #111318;
 }}
 
 .empty-log {{
@@ -290,6 +323,43 @@ h1 {{
     border-radius: 10px;
 
     padding: 15px;
+}}
+
+.indicator {{
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    padding: 8px 0;
+
+    border-bottom:
+        1px solid #292d35;
+}}
+
+.indicator:last-child {{
+    border-bottom: none;
+}}
+
+.indicator-name {{
+    color: #9da5b1;
+}}
+
+.indicator-value {{
+    font-weight: bold;
+}}
+
+.good {{
+    color: #3ddc84;
+}}
+
+.bad {{
+    color: #ff5c5c;
+}}
+
+.warning {{
+    color: #f0c75e;
 }}
 
 @media (max-width: 1100px) {{
@@ -319,10 +389,6 @@ h1 {{
         grid-template-columns: 1fr;
     }}
 
-    .logs {{
-        height: 350px;
-    }}
-
 }}
 
 </style>
@@ -348,9 +414,9 @@ h1 {{
 </div>
 
 
-<!-- TRADING STATUS -->
+<!-- TRADING -->
 
-<div class="card trading-card">
+<div class="card">
 
     <div class="card-title">
         TRADING STATUS
@@ -361,7 +427,8 @@ h1 {{
     </div>
 
     <div class="small">
-        DRY_RUN = {str(not state["trading"]).lower()}
+        DRY_RUN =
+        {str(not state["trading"]).lower()}
     </div>
 
 </div>
@@ -450,7 +517,7 @@ h1 {{
 </div>
 
 
-<!-- GEVINST / TAP -->
+<!-- GEVINST -->
 
 <div class="grid">
 
@@ -462,11 +529,12 @@ h1 {{
         </div>
 
         <div class="value {profit_class}">
-            {profit_sign}{profit:,.2f} kr
+            {profit_sign}
+            {profit:,.2f} kr
         </div>
 
         <div class="small">
-            Siden start:
+            Startkapital:
             1 800 kr
         </div>
 
@@ -480,11 +548,8 @@ h1 {{
         </div>
 
         <div class="value {profit_class}">
-            {profit_sign}{state["profit_percent"]:.2f} %
-        </div>
-
-        <div class="small">
-            Samlet portefølje
+            {profit_sign}
+            {state["profit_percent"]:.2f}%
         </div>
 
     </div>
@@ -513,12 +578,13 @@ h1 {{
             SIGNAL
         </div>
 
-        <div class="signal">
-            {state["signal"]}
+        <div class="signal {signal_class}">
+            {signal}
         </div>
 
         <div class="small">
-            {state["reason"]}
+            Score:
+            {state["history_points"]} datapunkter
         </div>
 
     </div>
@@ -527,7 +593,144 @@ h1 {{
 </div>
 
 
-<!-- SISTE OPPDATERING -->
+<!-- INDIKATORER -->
+
+<div class="section">
+
+    <div class="section-title">
+        Strategi
+    </div>
+
+    <div class="card">
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                RSI 14
+            </span>
+
+            <span class="indicator-value">
+                {state["rsi"]:.2f}
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                EMA 20
+            </span>
+
+            <span class="indicator-value">
+                {state["ema_fast"]:,.2f} kr
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                EMA 50
+            </span>
+
+            <span class="indicator-value">
+                {state["ema_slow"]:,.2f} kr
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Momentum
+            </span>
+
+            <span class="indicator-value">
+                {state["momentum"]:+.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Volatilitet
+            </span>
+
+            <span class="indicator-value">
+                {state["volatility"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Forventet bevegelse
+            </span>
+
+            <span class="indicator-value">
+                {state["expected_profit_percent"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Estimert kostnad
+            </span>
+
+            <span class="indicator-value">
+                {state["estimated_cost_percent"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Forventet netto
+            </span>
+
+            <span class="indicator-value">
+                {state["net_expected_percent"]:+.2f}%
+            </span>
+
+        </div>
+
+
+    </div>
+
+</div>
+
+
+<!-- SIGNALGRUNN -->
+
+<div class="section">
+
+    <div class="section-title">
+        Hvorfor?
+    </div>
+
+    <div class="info">
+
+        {state["reason"]}
+
+    </div>
+
+</div>
+
+
+<!-- OPPDATERING -->
 
 <div class="section">
 
@@ -541,8 +744,10 @@ h1 {{
             {state["last_update"]}
         </div>
 
-        <div class="update">
-            Dashboard oppdateres hvert 2. sekund
+        <div class="small">
+            Bot: 5 sekunder
+            |
+            Dashboard: live refresh
         </div>
 
     </div>
