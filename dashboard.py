@@ -1,5 +1,8 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi import HTTPException
+import os
+from typing import List
 
 app = FastAPI()
 
@@ -1129,3 +1132,51 @@ h1 {{
 
 </html>
 """
+
+
+
+@app.get("/debug/files")
+async def list_debug_files() -> JSONResponse:
+
+    debug_dir = os.path.join(os.getcwd(), "debug")
+
+    if not os.path.isdir(debug_dir):
+
+        return JSONResponse(200, [])
+
+    files: List[str] = []
+
+    for name in sorted(os.listdir(debug_dir), reverse=True):
+
+        path = os.path.join(debug_dir, name)
+
+        if os.path.isfile(path):
+
+            files.append(name)
+
+    return JSONResponse(content=files)
+
+
+@app.get("/debug/file/{fname}")
+async def get_debug_file(fname: str):
+
+    # Prevent directory traversal
+    if ".." in fname or fname.startswith("/"):
+
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    debug_dir = os.path.join(os.getcwd(), "debug")
+
+    path = os.path.join(debug_dir, fname)
+
+    if not os.path.isfile(path):
+
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+
+        return FileResponse(path, media_type="application/json", filename=fname)
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))

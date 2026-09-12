@@ -1,0 +1,2 @@
+# Debug folder for raw API history dumps
+# Files like history_<timestamp>.json will be created here by bot.py

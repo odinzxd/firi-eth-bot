@@ -9,6 +9,7 @@ import uvicorn
 from dotenv import load_dotenv
 from firipy import FiriAPI
 import aiohttp
+import json
 
 from dashboard import app, state, add_log
 from strategy import analyze_market
@@ -772,6 +773,26 @@ async def main():
                             f"History type: "
                             f"{type(history).__name__}"
                         )
+
+                        # Skriv rå history-respons til fil for feilsøking
+                        try:
+                            os.makedirs("debug", exist_ok=True)
+                            fname = (
+                                f"debug/history_{int(time.time())}.json"
+                            )
+                            with open(fname, "w", encoding="utf-8") as fh:
+                                try:
+                                    json.dump(history, fh, ensure_ascii=False, indent=2)
+                                    debug(f"Wrote raw history to {fname}")
+                                except TypeError:
+                                    # Noen responser kan ikke serialiseres direkte
+                                    try:
+                                        fh.write(repr(history))
+                                        debug(f"Wrote raw history repr to {fname}")
+                                    except Exception as e:
+                                        debug(f"Could not write history to file: {e}")
+                        except Exception as e:
+                            debug(f"Failed creating debug file: {e}")
 
                         # Ekstra debug: vis et kort sammendrag av rå history-responsen
                         try:
