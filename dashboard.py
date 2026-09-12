@@ -3,44 +3,80 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
+
+# ============================================================
+# GLOBAL STATE
+# ============================================================
+
 state = {
+
     "status": "STARTING",
+
     "trading": False,
 
+    # Pris
     "price": 0.0,
     "bid": 0.0,
     "ask": 0.0,
     "spread": 0.0,
 
+    # Saldo
     "nok": 0.0,
     "eth": 0.0,
 
+    # Portefølje
     "eth_value": 0.0,
     "portfolio_value": 0.0,
 
+    # Resultat
     "profit_nok": 0.0,
     "profit_percent": 0.0,
 
+    # Strategi
     "signal": "HOLD",
     "reason": "Starter...",
 
     "rsi": 50.0,
+
     "ema_fast": 0.0,
     "ema_slow": 0.0,
+
     "momentum": 0.0,
     "volatility": 0.0,
 
+    "trend": "UNKNOWN",
+
+    "buy_score": 0,
+    "sell_score": 0,
+
+    # Kostnader
     "expected_profit_percent": 0.0,
     "estimated_cost_percent": 0.0,
     "net_expected_percent": 0.0,
 
+    # Historikk
     "history_points": 0,
 
+    # Feilsøking
+    "last_ticker_ok": False,
+    "last_balance_ok": False,
+    "last_history_ok": False,
+    "last_strategy_ok": False,
+
+    "error_count": 0,
+    "last_error": "Ingen feil",
+
+    # Tid
     "last_update": "-",
 
+    # Console
     "logs": [],
 }
 
+
+# ============================================================
+# LOGGING
+# ============================================================
 
 def add_log(message):
 
@@ -48,12 +84,18 @@ def add_log(message):
         message
     )
 
-    if len(state["logs"]) > 300:
+    if len(
+        state["logs"]
+    ) > 300:
 
         state["logs"] = (
             state["logs"][-300:]
         )
 
+
+# ============================================================
+# HTML
+# ============================================================
 
 @app.get(
     "/",
@@ -64,6 +106,11 @@ async def dashboard():
     profit = (
         state["profit_nok"]
     )
+
+
+    # --------------------------------------------------------
+    # PROFIT
+    # --------------------------------------------------------
 
     if profit > 0:
 
@@ -81,6 +128,10 @@ async def dashboard():
         profit_sign = ""
 
 
+    # --------------------------------------------------------
+    # TRADING
+    # --------------------------------------------------------
+
     if state["trading"]:
 
         trading_text = "ON (LIVE)"
@@ -91,6 +142,10 @@ async def dashboard():
         trading_text = "OFF (DRY RUN)"
         trading_class = "trading-off"
 
+
+    # --------------------------------------------------------
+    # SIGNAL
+    # --------------------------------------------------------
 
     signal = state["signal"]
 
@@ -107,6 +162,31 @@ async def dashboard():
         signal_class = "signal-hold"
 
 
+    # --------------------------------------------------------
+    # HELSE
+    # --------------------------------------------------------
+
+    def health(ok):
+
+        if ok:
+
+            return (
+                '<span class="ok">'
+                '● OK'
+                '</span>'
+            )
+
+        return (
+            '<span class="error">'
+            '● FEIL'
+            '</span>'
+        )
+
+
+    # --------------------------------------------------------
+    # LOGS
+    # --------------------------------------------------------
+
     logs_html = ""
 
     for log_message in reversed(
@@ -114,20 +194,24 @@ async def dashboard():
     ):
 
         logs_html += (
-            f'<div class="log">'
+            '<div class="log">'
             f'{log_message}'
-            f'</div>'
+            '</div>'
         )
 
 
     if not logs_html:
 
         logs_html = (
-            '<div class="empty-log">'
+            '<div class="empty">'
             'Ingen logger ennå...'
             '</div>'
         )
 
+
+    # ========================================================
+    # HTML
+    # ========================================================
 
     return f"""
 <!DOCTYPE html>
@@ -139,9 +223,12 @@ async def dashboard():
 <meta charset="UTF-8">
 
 <meta name="viewport"
-      content="width=device-width, initial-scale=1.0">
+content="width=device-width, initial-scale=1.0">
 
-<title>Firi ETH Trading Bot</title>
+<meta http-equiv="refresh" content="2">
+
+<title>Firi ETH Bot</title>
+
 
 <style>
 
@@ -149,244 +236,362 @@ async def dashboard():
     box-sizing: border-box;
 }}
 
-body {{
-    margin: 0;
-    padding: 0;
 
-    background: #0f1115;
+body {{
+
+    margin: 0;
+
+    background: #0e1014;
+
     color: #f5f5f5;
 
     font-family:
         Arial,
         Helvetica,
         sans-serif;
+
 }}
+
 
 .container {{
-    max-width: 1600px;
+
+    max-width: 1700px;
+
     margin: auto;
+
     padding: 20px;
+
 }}
+
 
 .header {{
+
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+
+    justify-content:
+        space-between;
+
+    align-items:
+        center;
 
     margin-bottom: 20px;
+
 }}
+
 
 h1 {{
+
     margin: 0;
+
     font-size: 28px;
+
 }}
 
-.bot-status {{
-    color: #3ddc84;
-    font-size: 14px;
-    font-weight: bold;
-}}
-
-.grid {{
-    display: grid;
-
-    grid-template-columns:
-        repeat(4, minmax(0, 1fr));
-
-    gap: 14px;
-
-    margin-top: 14px;
-}}
 
 .card {{
-    background: #1a1d23;
 
-    border: 1px solid #292d35;
+    background: #191c22;
+
+    border: 1px solid #292e37;
 
     border-radius: 12px;
 
     padding: 20px;
+
 }}
 
-.card-title {{
-    color: #8f98a8;
+
+.grid {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            4,
+            minmax(0, 1fr)
+        );
+
+    gap: 14px;
+
+    margin-top: 14px;
+
+}}
+
+
+.title {{
+
+    color: #8e98a8;
 
     font-size: 12px;
 
     font-weight: bold;
 
-    letter-spacing: 0.5px;
-
     margin-bottom: 10px;
+
+    text-transform:
+        uppercase;
+
 }}
 
+
 .value {{
+
     font-size: 25px;
 
     font-weight: bold;
+
 }}
 
+
 .small {{
-    color: #8f98a8;
+
+    margin-top: 7px;
+
+    color: #8993a3;
 
     font-size: 13px;
 
-    margin-top: 7px;
 }}
 
-.profit {{
-    color: #3ddc84;
-}}
 
-.loss {{
-    color: #ff5c5c;
-}}
-
-.neutral {{
-    color: #f0c75e;
-}}
-
+.profit,
+.ok,
 .trading-on {{
+
     color: #3ddc84;
+
 }}
 
+
+.loss,
+.error,
 .trading-off {{
+
     color: #ff5c5c;
+
 }}
+
+
+.neutral,
+.signal-hold {{
+
+    color: #f0c75e;
+
+}}
+
 
 .signal-buy {{
+
     color: #3ddc84;
+
 }}
+
 
 .signal-sell {{
+
     color: #ff5c5c;
+
 }}
 
-.signal-hold {{
-    color: #f0c75e;
-}}
 
 .signal {{
+
     font-size: 25px;
+
     font-weight: bold;
+
 }}
+
 
 .section {{
+
     margin-top: 20px;
+
 }}
+
 
 .section-title {{
+
     font-size: 20px;
+
     font-weight: bold;
+
     margin-bottom: 10px;
+
 }}
 
+
+.indicator {{
+
+    display: flex;
+
+    justify-content:
+        space-between;
+
+    padding: 10px 0;
+
+    border-bottom:
+        1px solid #292e37;
+
+}}
+
+
+.indicator:last-child {{
+
+    border-bottom: none;
+
+}}
+
+
+.indicator-name {{
+
+    color: #929baa;
+
+}}
+
+
+.indicator-value {{
+
+    font-weight: bold;
+
+}}
+
+
 .logs {{
+
     background: #050609;
 
-    border: 1px solid #292d35;
+    border: 1px solid #292e37;
 
     border-radius: 10px;
-
-    padding: 15px;
 
     height: 450px;
 
     overflow-y: auto;
 
+    padding: 15px;
+
     font-family:
         Consolas,
-        "Courier New",
         monospace;
 
     font-size: 12px;
 
     line-height: 1.6;
+
 }}
+
 
 .log {{
-    padding: 3px 0;
 
     border-bottom:
-        1px solid #111318;
+        1px solid #111419;
+
+    padding: 3px 0;
+
+    white-space:
+        pre-wrap;
+
 }}
 
-.empty-log {{
-    color: #6f7785;
+
+.empty {{
+
+    color: #657080;
+
 }}
 
-.info {{
-    background: #1a1d23;
 
-    border: 1px solid #292d35;
+.health-grid {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            4,
+            minmax(0, 1fr)
+        );
+
+    gap: 10px;
+
+}}
+
+
+.health-item {{
+
+    background: #101217;
+
+    border-radius: 8px;
+
+    padding: 12px;
+
+}}
+
+
+.alert {{
+
+    border: 1px solid #5b2020;
+
+    background: #241315;
 
     border-radius: 10px;
 
     padding: 15px;
+
+    margin-top: 14px;
+
 }}
 
-.indicator {{
-    display: flex;
 
-    justify-content: space-between;
+.reason {{
 
-    align-items: center;
+    background: #101217;
 
-    padding: 8px 0;
+    border-radius: 8px;
 
-    border-bottom:
-        1px solid #292d35;
+    padding: 15px;
+
+    color: #d7dce4;
+
 }}
 
-.indicator:last-child {{
-    border-bottom: none;
-}}
-
-.indicator-name {{
-    color: #9da5b1;
-}}
-
-.indicator-value {{
-    font-weight: bold;
-}}
-
-.good {{
-    color: #3ddc84;
-}}
-
-.bad {{
-    color: #ff5c5c;
-}}
-
-.warning {{
-    color: #f0c75e;
-}}
 
 @media (max-width: 1100px) {{
 
-    .grid {{
+    .grid,
+    .health-grid {{
+
         grid-template-columns:
-            repeat(2, minmax(0, 1fr));
+            repeat(
+                2,
+                minmax(0, 1fr)
+            );
+
     }}
 
 }}
+
 
 @media (max-width: 600px) {{
 
     .container {{
+
         padding: 10px;
+
     }}
 
     .header {{
+
         display: block;
+
     }}
 
-    .bot-status {{
-        margin-top: 8px;
-    }}
+    .grid,
+    .health-grid {{
 
-    .grid {{
-        grid-template-columns: 1fr;
+        grid-template-columns:
+            1fr;
+
     }}
 
 }}
@@ -398,8 +603,13 @@ h1 {{
 
 <body>
 
+
 <div class="container">
 
+
+<!-- ===================================================== -->
+<!-- HEADER -->
+<!-- ===================================================== -->
 
 <div class="header">
 
@@ -407,19 +617,23 @@ h1 {{
         Firi ETH Trading Bot
     </h1>
 
-    <div class="bot-status">
-        ● {state["status"]}
+    <div>
+        <span class="ok">
+            ● {state["status"]}
+        </span>
     </div>
 
 </div>
 
 
-<!-- TRADING -->
+<!-- ===================================================== -->
+<!-- TRADING STATUS -->
+<!-- ===================================================== -->
 
 <div class="card">
 
-    <div class="card-title">
-        TRADING STATUS
+    <div class="title">
+        Trading
     </div>
 
     <div class="value {trading_class}">
@@ -434,14 +648,16 @@ h1 {{
 </div>
 
 
-<!-- MARKEDATA -->
+<!-- ===================================================== -->
+<!-- PRIS / SALDO -->
+<!-- ===================================================== -->
 
 <div class="grid">
 
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             ETH/NOK
         </div>
 
@@ -451,12 +667,12 @@ h1 {{
 
         <div class="small">
             Bid:
-            {state["bid"]:,.2f} kr
+            {state["bid"]:,.2f}
         </div>
 
         <div class="small">
             Ask:
-            {state["ask"]:,.2f} kr
+            {state["ask"]:,.2f}
         </div>
 
     </div>
@@ -464,15 +680,17 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             ETH BEHOLDNING
         </div>
 
         <div class="value">
-            {state["eth"]:.8f} ETH
+            {state["eth"]:.8f}
         </div>
 
         <div class="small">
+            ETH
+            |
             Verdi:
             {state["eth_value"]:,.2f} kr
         </div>
@@ -482,16 +700,12 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
-            NOK SALDO
+        <div class="title">
+            NOK
         </div>
 
         <div class="value">
             {state["nok"]:,.2f} kr
-        </div>
-
-        <div class="small">
-            Tilgjengelig for handel
         </div>
 
     </div>
@@ -499,7 +713,7 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             TOTAL PORTEFØLJE
         </div>
 
@@ -517,14 +731,16 @@ h1 {{
 </div>
 
 
-<!-- GEVINST -->
+<!-- ===================================================== -->
+<!-- PROFIT -->
+<!-- ===================================================== -->
 
 <div class="grid">
 
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             GEVINST / TAP
         </div>
 
@@ -543,7 +759,7 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             AVKASTNING
         </div>
 
@@ -557,7 +773,7 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             SPREAD
         </div>
 
@@ -574,7 +790,7 @@ h1 {{
 
     <div class="card">
 
-        <div class="card-title">
+        <div class="title">
             SIGNAL
         </div>
 
@@ -583,8 +799,11 @@ h1 {{
         </div>
 
         <div class="small">
-            Score:
-            {state["history_points"]} datapunkter
+            BUY:
+            {state["buy_score"]}/12
+            |
+            SELL:
+            {state["sell_score"]}/12
         </div>
 
     </div>
@@ -593,13 +812,16 @@ h1 {{
 </div>
 
 
+<!-- ===================================================== -->
 <!-- INDIKATORER -->
+<!-- ===================================================== -->
 
 <div class="section">
 
     <div class="section-title">
-        Strategi
+        Markedsindikatorer
     </div>
+
 
     <div class="card">
 
@@ -638,6 +860,19 @@ h1 {{
 
             <span class="indicator-value">
                 {state["ema_slow"]:,.2f} kr
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Trend
+            </span>
+
+            <span class="indicator-value">
+                {state["trend"]}
             </span>
 
         </div>
@@ -708,20 +943,36 @@ h1 {{
         </div>
 
 
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Historikk
+            </span>
+
+            <span class="indicator-value">
+                {state["history_points"]}
+                datapunkter
+            </span>
+
+        </div>
+
+
     </div>
 
 </div>
 
 
-<!-- SIGNALGRUNN -->
+<!-- ===================================================== -->
+<!-- SIGNAL -->
+<!-- ===================================================== -->
 
 <div class="section">
 
     <div class="section-title">
-        Hvorfor?
+        Strategiforklaring
     </div>
 
-    <div class="info">
+    <div class="reason">
 
         {state["reason"]}
 
@@ -730,24 +981,101 @@ h1 {{
 </div>
 
 
-<!-- OPPDATERING -->
+<!-- ===================================================== -->
+<!-- SYSTEMHELSEN -->
+<!-- ===================================================== -->
 
 <div class="section">
 
-    <div class="info">
+    <div class="section-title">
+        Systemstatus
+    </div>
 
-        <div class="card-title">
-            SISTE OPPDATERING
+
+    <div class="health-grid">
+
+
+        <div class="health-item">
+
+            <div class="title">
+                Firi Ticker
+            </div>
+
+            {health(
+                state["last_ticker_ok"]
+            )}
+
         </div>
 
-        <div>
-            {state["last_update"]}
+
+        <div class="health-item">
+
+            <div class="title">
+                Firi Balance
+            </div>
+
+            {health(
+                state["last_balance_ok"]
+            )}
+
+        </div>
+
+
+        <div class="health-item">
+
+            <div class="title">
+                Market History
+            </div>
+
+            {health(
+                state["last_history_ok"]
+            )}
+
+        </div>
+
+
+        <div class="health-item">
+
+            <div class="title">
+                Strategy
+            </div>
+
+            {health(
+                state["last_strategy_ok"]
+            )}
+
+        </div>
+
+
+    </div>
+
+</div>
+
+
+<!-- ===================================================== -->
+<!-- FEIL -->
+<!-- ===================================================== -->
+
+<div class="section">
+
+    <div class="section-title">
+        Feilsøking
+    </div>
+
+
+    <div class="alert">
+
+        <div class="title">
+            Antall feil
+        </div>
+
+        <div class="value">
+            {state["error_count"]}
         </div>
 
         <div class="small">
-            Bot: 5 sekunder
-            |
-            Dashboard: live refresh
+            Siste feil:
+            {state["last_error"]}
         </div>
 
     </div>
@@ -755,7 +1083,30 @@ h1 {{
 </div>
 
 
+<!-- ===================================================== -->
+<!-- OPPDATERING -->
+<!-- ===================================================== -->
+
+<div class="section">
+
+    <div class="card">
+
+        <div class="title">
+            Sist oppdatert
+        </div>
+
+        <div>
+            {state["last_update"]}
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- ===================================================== -->
 <!-- CONSOLE -->
+<!-- ===================================================== -->
 
 <div class="section">
 
