@@ -2,3 +2,4 @@ firipy
 python-dotenv
 fastapi
 uvicorn[standard]
+aiohttp

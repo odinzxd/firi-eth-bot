@@ -8,6 +8,7 @@ from datetime import datetime
 import uvicorn
 from dotenv import load_dotenv
 from firipy import FiriAPI
+import aiohttp
 
 from dashboard import app, state, add_log
 from strategy import analyze_market
@@ -84,6 +85,23 @@ MAX_PRICE_HISTORY = 500
 # ============================================================
 
 MAX_SPREAD_PERCENT = 0.005
+
+
+# ============================================================
+# FALLBACK / CONFIG
+# ============================================================
+
+FALLBACK_SOURCES = os.getenv(
+    "FALLBACK_SOURCES",
+    "coingecko"
+).lower().split(",")
+
+FALLBACK_DAYS = int(
+    os.getenv(
+        "FALLBACK_DAYS",
+        "2"
+    )
+)
 
 
 # ============================================================
@@ -793,6 +811,91 @@ async def main():
                                 history
                             )
                         )
+
+                        # Hvis Firi ikke ga brukbare priser, prøv fallback-kilder basert på konfigurasjon
+                        if not price_history:
+
+                            debug(
+                                "Firi history tom — prøver konfigurerte fallback-kilder."
+                            )
+
+                            try:
+
+                                async def fetch_coingecko_history(vs_currency: str = "nok", days: int = 2):
+
+                                    url = (
+                                        f"https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency={vs_currency}&days={days}"
+                                    )
+
+                                    async with aiohttp.ClientSession() as session:
+
+                                        async with session.get(url, timeout=10) as resp:
+
+                                            if resp.status != 200:
+
+                                                debug(
+                                                    f"CoinGecko returned status {resp.status}"
+                                                )
+
+                                                return []
+
+                                            data = await resp.json()
+
+                                    prices = data.get("prices", [])
+
+                                    if not prices:
+
+                                        return []
+
+                                    buckets = {}
+
+                                    for ts_ms, price in prices:
+
+                                        ts = ts_ms / 1000.0
+
+                                        minute = int(ts // 60)
+
+                                        buckets[minute] = float(price)
+
+                                    result = [
+                                        buckets[k]
+                                        for k in sorted(buckets.keys())
+                                    ]
+
+                                    return result[-MAX_PRICE_HISTORY:]
+
+                                # Bestem valuta for CoinGecko basert på MARKET (f.eks. ETHNOK -> nok)
+                                vs_currency = (
+                                    "nok"
+                                    if (
+                                        "NOK" in MARKET.upper()
+                                    )
+                                    else "usd"
+                                )
+
+                                if "coingecko" in FALLBACK_SOURCES:
+
+                                    cg_prices = await fetch_coingecko_history(vs_currency, FALLBACK_DAYS)
+
+                                    if cg_prices:
+
+                                        price_history = cg_prices
+
+                                        debug(
+                                            f"CoinGecko fallback OK: {len(price_history)} priser."
+                                        )
+
+                                    else:
+
+                                        debug(
+                                            "CoinGecko fallback ga ingen priser."
+                                        )
+
+                            except Exception as e:
+
+                                debug(
+                                    f"Fallback feil: {e}"
+                                )
 
                         if len(
                             price_history
