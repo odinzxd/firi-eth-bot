@@ -70,6 +70,8 @@ state = {
 
     "momentum": 0.0,
     "volatility": 0.0,
+    "estimated_cost_percent": 0.0,
+    "required_move_percent": 0.0,
 
     "trend": "UNKNOWN",
 
@@ -985,6 +987,32 @@ h1 {{
 
             <span class="indicator-value">
                 {state["volatility"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Anslått tur-retur-kostnad
+            </span>
+
+            <span class="indicator-value">
+                {state["estimated_cost_percent"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Min. bevegelse for signal
+            </span>
+
+            <span class="indicator-value">
+                {state["required_move_percent"]:.2f}%
             </span>
 
         </div>

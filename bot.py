@@ -1311,6 +1311,14 @@ async def main():
                     signal.volatility
                 )
 
+                state["estimated_cost_percent"] = (
+                    signal.estimated_cost_percent
+                )
+
+                state["required_move_percent"] = (
+                    signal.required_move_percent
+                )
+
                 state["trend"] = (
                     signal.trend
                 )
@@ -1372,6 +1380,7 @@ async def main():
                     f"EMA5 {signal.ema_fast:,.0f} | "
                     f"EMA15 {signal.ema_slow:,.0f} | "
                     f"MOM {signal.momentum:+.2f}% | "
+                    f"MIN {signal.required_move_percent:.2f}% | "
                     f"TREND {signal.trend}"
                 )
 

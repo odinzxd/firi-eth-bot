@@ -14,6 +14,11 @@ MOMENTUM_THRESHOLD = 0.05  # prosent over de siste tre 1-minutts-candlene
 MIN_HISTORY = EMA_SLOW + 1
 MAX_SPREAD_PERCENT = 0.005
 
+# Firi Avansert handel: 0,7 % for kjøp + 0,7 % for salg.
+BUY_FEE_PERCENT = 0.7
+SELL_FEE_PERCENT = 0.7
+PROFIT_SAFETY_MARGIN_PERCENT = 0.20
+
 
 @dataclass
 class Signal:
@@ -24,6 +29,8 @@ class Signal:
     ema_slow: float = 0.0
     momentum: float = 0.0
     volatility: float = 0.0
+    estimated_cost_percent: float = 0.0
+    required_move_percent: float = 0.0
     trend: str = "UNKNOWN"
     buy_score: int = 0
     sell_score: int = 0
@@ -78,6 +85,15 @@ def calculate_volatility(prices: List[float], periods: int = 10) -> float:
     return variance ** 0.5
 
 
+def calculate_round_trip_cost_percent(spread_percent: float) -> float:
+    """Anslått kostnad for kjøp og senere salg med dagens spread."""
+    return (
+        BUY_FEE_PERCENT
+        + SELL_FEE_PERCENT
+        + max(0.0, spread_percent) * 100.0
+    )
+
+
 def analyze_market(
     prices: List[float],
     spread_percent: float = 0.0
@@ -93,6 +109,11 @@ def analyze_market(
     ema_slow = calculate_ema(prices, EMA_SLOW) or current_price
     momentum = calculate_momentum(prices)
     volatility = calculate_volatility(prices)
+    estimated_cost = calculate_round_trip_cost_percent(spread_percent)
+    required_move = max(
+        MOMENTUM_THRESHOLD,
+        estimated_cost + PROFIT_SAFETY_MARGIN_PERCENT
+    )
 
     if ema_fast > ema_slow:
         trend = "BULLISH"
@@ -109,11 +130,13 @@ def analyze_market(
             ema_slow=ema_slow,
             momentum=momentum,
             volatility=volatility,
+            estimated_cost_percent=estimated_cost,
+            required_move_percent=required_move,
             trend=trend
         )
 
     # Aktiv logikk: kort bevegelse i samme retning som rask EMA gir signal.
-    if momentum >= MOMENTUM_THRESHOLD and current_price >= ema_fast:
+    if momentum >= required_move and current_price >= ema_fast:
         return Signal(
             action="BUY",
             reason=(
@@ -125,11 +148,13 @@ def analyze_market(
             ema_slow=ema_slow,
             momentum=momentum,
             volatility=volatility,
+            estimated_cost_percent=estimated_cost,
+            required_move_percent=required_move,
             trend=trend,
             buy_score=1
         )
 
-    if momentum <= -MOMENTUM_THRESHOLD and current_price <= ema_fast:
+    if momentum <= -required_move and current_price <= ema_fast:
         return Signal(
             action="SELL",
             reason=(
@@ -141,6 +166,8 @@ def analyze_market(
             ema_slow=ema_slow,
             momentum=momentum,
             volatility=volatility,
+            estimated_cost_percent=estimated_cost,
+            required_move_percent=required_move,
             trend=trend,
             sell_score=1
         )
@@ -148,12 +175,14 @@ def analyze_market(
     return Signal(
         action="HOLD",
         reason=(
-            f"Venter på bevegelse på minst "
-            f"±{MOMENTUM_THRESHOLD:.2f}% (nå {momentum:+.2f}%)"
+            f"Bevegelse {momentum:+.2f}% dekker ikke anslått "
+            f"kostnad + margin ({required_move:.2f}%)"
         ),
         ema_fast=ema_fast,
         ema_slow=ema_slow,
         momentum=momentum,
         volatility=volatility,
+        estimated_cost_percent=estimated_cost,
+        required_move_percent=required_move,
         trend=trend
     )
