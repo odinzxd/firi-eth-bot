@@ -14,6 +14,7 @@ class FiriClient:
         self.client_id = os.getenv("FIRI_CLIENT_ID")
         self.secret_key = os.getenv("FIRI_SECRET_KEY")
         self.market = os.getenv("MARKET", "ETHNOK")
+        self.dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
 
         missing = []
         if not self.api_key:
@@ -23,7 +24,7 @@ class FiriClient:
         if not self.secret_key:
             missing.append("FIRI_SECRET_KEY")
 
-        if missing:
+        if missing and not self.dry_run:
             raise RuntimeError(
                 "Mangler Firi-miljøvariabler: " + ", ".join(missing)
             )
@@ -31,6 +32,10 @@ class FiriClient:
         self.client = None
 
     async def connect(self):
+        if self.dry_run:
+            self.client = None
+            return self
+
         self.client = FiriAPI(
             api_key=self.api_key,
             secret_key=self.secret_key,
@@ -45,6 +50,15 @@ class FiriClient:
             self.client = None
 
     async def get_ticker(self) -> Dict[str, float]:
+        if self.dry_run:
+            return {
+                "bid": 0.0,
+                "ask": 0.0,
+                "price": 0.0,
+                "spread": 0.0,
+                "spread_percent": 0.0,
+            }
+
         if self.client is None:
             raise RuntimeError("FiriClient er ikke tilkoblet.")
 
@@ -66,6 +80,9 @@ class FiriClient:
         }
 
     async def get_balances(self) -> Dict[str, float]:
+        if self.dry_run:
+            return {"NOK": 0.0, "ETH": 0.0}
+
         if self.client is None:
             raise RuntimeError("FiriClient er ikke tilkoblet.")
 
@@ -82,6 +99,14 @@ class FiriClient:
         price: float,
         amount: float,
     ) -> Any:
+        if self.dry_run:
+            return {
+                "dry_run": True,
+                "action": action,
+                "price": price,
+                "amount": amount,
+            }
+
         if self.client is None:
             raise RuntimeError("FiriClient er ikke tilkoblet.")
 

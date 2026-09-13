@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -6,6 +7,25 @@ from fastapi.responses import HTMLResponse
 
 
 app = FastAPI(title="Firi Simple ETH Bot")
+
+
+@app.on_event("startup")
+async def startup_event():
+    if not os.getenv("BOT_RUNNING_IN_BACKGROUND", "false").lower() == "true":
+        thread = threading.Thread(
+            target=_run_bot_in_background,
+            daemon=True,
+        )
+        thread.start()
+        os.environ["BOT_RUNNING_IN_BACKGROUND"] = "true"
+
+
+def _run_bot_in_background():
+    import asyncio
+
+    from bot import main as bot_main
+
+    asyncio.run(bot_main())
 
 
 state = {
@@ -211,7 +231,7 @@ def start_dashboard():
     import uvicorn
 
     uvicorn.run(
-        app,
+        "dashboard:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8080")),
         log_level="warning",
