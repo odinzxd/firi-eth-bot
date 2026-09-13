@@ -48,6 +48,8 @@ state = {
     "stop_loss": 0.0,
     "nok": 0.0,
     "eth": 0.0,
+    "eth_value_nok": 0.0,
+    "total_portfolio_nok": 0.0,
     "daily_trades": 0,
     "max_daily_trades": 10,
     "market_data_ok": False,
@@ -87,6 +89,11 @@ async def dashboard():
         str(item).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         for item in reversed(state["logs"][-40:])
     )
+
+    eth_value_nok = state["eth"] * state["price"] if state["price"] else 0.0
+    total_portfolio_nok = state["nok"] + eth_value_nok
+    state["eth_value_nok"] = eth_value_nok
+    state["total_portfolio_nok"] = total_portfolio_nok
 
     return f"""
 <!doctype html>
@@ -180,6 +187,14 @@ h1 {{ margin-bottom:25px; }}
 </div>
 
 </div>
+</div>
+
+<div class="section card">
+<div class="title">BEHOLDNING</div>
+<div class="row"><span>NOK-beholdning</span><span class="value">{fmt(state["nok"])} NOK</span></div>
+<div class="row"><span>ETH-beholdning</span><span class="value">{fmt(state["eth"],8)} ETH</span></div>
+<div class="row"><span>ETH-verdi</span><span class="value">{fmt(eth_value_nok)} NOK</span></div>
+<div class="row"><span>Total beholdning</span><span class="value">{fmt(total_portfolio_nok)} NOK</span></div>
 </div>
 
 <div class="section card">
