@@ -484,9 +484,19 @@ def extract_trades(
     return trades
 
 
-def build_minute_prices(
-    history
-):
+def count_raw_history_items(data):
+    """Count top-level API items without treating nested fields as trades."""
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        for key in ("data", "trades", "history", "result"):
+            if isinstance(data.get(key), list):
+                return len(data[key])
+    return 0
+
+
+def build_minute_history(history):
+    """Convert genuine trades to sorted one-minute closes without filling gaps."""
 
     trades = extract_trades(
         history
@@ -514,42 +524,25 @@ def build_minute_prices(
 
         buckets[minute] = price
 
-    last_minute = max(buckets)
-    first_minute = max(
-        min(buckets),
-        last_minute - MAX_PRICE_HISTORY + 1
-    )
-
-    previous_minutes = [
-        minute
-        for minute in buckets
-        if minute <= first_minute
-    ]
-
-    if not previous_minutes:
-
-        return []
-
-    close = buckets[max(previous_minutes)]
-    prices = []
-
-    for minute in range(first_minute, last_minute + 1):
-
-        if minute in buckets:
-
-            close = buckets[minute]
-
-        prices.append(close)
+    minute_history = sorted(buckets.items())[-MAX_PRICE_HISTORY:]
 
     debug(
-        "Candles: "
-        f"{len(prices)} x 1 min "
-        f"({datetime.fromtimestamp(first_minute * 60).isoformat()} -> "
-        f"{datetime.fromtimestamp(last_minute * 60).isoformat()}); "
-        f"trades={len(trades)}"
+        f"Raw parsed trades={len(trades)} | "
+        f"unique 1-min candles={len(minute_history)} | "
+        f"range={datetime.fromtimestamp(minute_history[0][0] * 60).isoformat()} -> "
+        f"{datetime.fromtimestamp(minute_history[-1][0] * 60).isoformat()}"
     )
 
-    return prices
+    return minute_history
+
+
+def merge_minute_history(existing, incoming):
+    """Merge by minute, without duplicate or synthetic datapoints."""
+    merged = {minute: price for minute, price in existing}
+    for minute, price in incoming:
+        if price > 0:
+            merged[minute] = price
+    return sorted(merged.items())[-MAX_PRICE_HISTORY:]
 
 
 # ============================================================

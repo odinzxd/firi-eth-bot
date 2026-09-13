@@ -5,7 +5,7 @@ import math
 from typing import List, Optional
 
 EMA_FAST, EMA_SLOW, EMA_TREND = 9, 21, 50
-RSI_PERIOD, MOMENTUM_PERIOD, MIN_HISTORY = 14, 5, EMA_TREND + 5
+RSI_PERIOD, MOMENTUM_PERIOD, MIN_HISTORY = 14, 5, 100
 MIN_ENTRY_MOVE_PERCENT = 0.45
 BUY_FEE_PERCENT, SELL_FEE_PERCENT, PROFIT_SAFETY_MARGIN_PERCENT = 0.70, 0.70, 0.15
 TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT = 1.80, 0.90
@@ -18,17 +18,17 @@ class Signal:
     action: str
     reason: str
     score: int = 0
-    ema_fast: float = 0.0
-    ema_slow: float = 0.0
-    ema_trend: float = 0.0
-    momentum: float = 0.0
-    volatility: float = 0.0
-    rsi: float = 50.0
-    estimated_cost_percent: float = 0.0
-    required_move_percent: float = 0.0
-    trend: str = "UNKNOWN"
-    buy_score: int = 0
-    sell_score: int = 0
+    ema_fast: Optional[float] = None
+    ema_slow: Optional[float] = None
+    ema_trend: Optional[float] = None
+    momentum: Optional[float] = None
+    volatility: Optional[float] = None
+    rsi: Optional[float] = None
+    estimated_cost_percent: Optional[float] = None
+    required_move_percent: Optional[float] = None
+    trend: str = "WARMING UP"
+    buy_score: Optional[int] = None
+    sell_score: Optional[int] = None
 
 
 def calculate_ema(prices: List[float], period: int) -> Optional[float]:
@@ -74,7 +74,7 @@ def analyze_market(prices: List[float], spread_percent: float = 0.0,
                    has_position: bool = False, entry_price: float = 0.0) -> Signal:
     """Return BUY, SELL, or HOLD without placing an order."""
     if len(prices) < MIN_HISTORY:
-        return Signal("HOLD", f"Varmer opp historikk: {len(prices)}/{MIN_HISTORY} datapunkter.")
+        return Signal("HOLD", f"WARMING UP: {len(prices)}/{MIN_HISTORY} ekte minuttdatapunkter.")
 
     current = prices[-1]
     ema_fast = calculate_ema(prices, EMA_FAST) or current
