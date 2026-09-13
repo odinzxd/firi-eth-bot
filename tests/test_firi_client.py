@@ -25,6 +25,24 @@ def test_calculate_trade_costs_includes_spread_and_fees():
     assert estimate["take_profit_percent"] == 3.7
 
 
+def test_bot_reads_test_trade_environment_variables(monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("TEST_BUY_NOK", "450")
+    monkeypatch.setenv("TEST_SELL_NOK", "300")
+    monkeypatch.setenv("TEST_TRADING_ENABLED", "true")
+    monkeypatch.setenv("TEST_TRADE_PASSWORD", "secretpw")
+
+    import bot
+
+    importlib.reload(bot)
+
+    assert bot.TEST_BUY_NOK == 450.0
+    assert bot.TEST_SELL_NOK == 300.0
+    assert bot.TEST_TRADING_ENABLED is True
+    assert bot.TEST_TRADE_PASSWORD == "secretpw"
+
+
 def test_analyze_market_does_not_sell_on_single_bearish_ema():
     prices = [1000.0] * 30 + [995.0] * 10
 
