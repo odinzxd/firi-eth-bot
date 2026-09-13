@@ -686,6 +686,12 @@ def start_dashboard():
 # HOVEDPROGRAM
 # ============================================================
 
+# DAYTRADING-INNSTILLINGER
+COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS", "900"))
+MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", "8"))
+MIN_TRADE_NOK = float(os.getenv("MIN_TRADE_NOK", "50"))
+POSITION_PERCENT = float(os.getenv("POSITION_PERCENT", "50"))
+
 async def main():
 
     global last_ticker_ok
@@ -846,6 +852,11 @@ async def main():
 
             price_history = []
 
+            entry_price = float(os.getenv("ENTRY_PRICE", "0"))
+            last_trade_time = 0.0
+            trades_today = 0
+            day_key = datetime.now().date()
+
             last_history_update = 0
 
             last_balance_update = 0
@@ -862,6 +873,12 @@ async def main():
             # =================================================
 
             while True:
+
+                today = datetime.now().date()
+                if today != day_key:
+                    day_key = today
+                    trades_today = 0
+                    log("Ny handelsdag: trade-teller nullstilt.")
 
                 loop_start = (
                     time.time()
@@ -1205,31 +1222,106 @@ async def main():
 
                 # =================================================
                 # STRATEGI
-                # =================================================
-
                 try:
+                    has_position = eth > 0.000001 and entry_price > 0
 
                     signal = analyze_market(
                         price_history,
-                        spread_percent
+                        spread_percent,
+                        has_position=has_position,
+                        entry_price=entry_price,
                     )
-
                     last_strategy_ok = True
-
                 except Exception as e:
-
                     last_strategy_ok = False
-
-                    log_error(
-                        "STRATEGY",
-                        e
-                    )
-
+                    log_error("STRATEGY", e)
                     continue
 
-
-                # =================================================
                 # PORTEFØLJE
+                eth_value = eth * price
+                portfolio_value = nok + eth_value
+                profit_nok = portfolio_value - STARTING_CAPITAL_NOK
+                profit_percent = (profit_nok / STARTING_CAPITAL_NOK) * 100.0
+
+                # AUTOMATISK DAYTRADING
+                cooldown_ok = (time.time() - last_trade_time) >= COOLDOWN_SECONDS
+
+                if spread_percent > MAX_SPREAD_PERCENT:
+                    debug("HANDELSSTOPP: spread for høy.")
+
+                elif trades_today >= MAX_TRADES_PER_DAY:
+                    debug(f"HANDELSSTOPP: {MAX_TRADES_PER_DAY} trades/dag nådd.")
+
+                elif not cooldown_ok:
+                    debug("HANDELSSTOPP: cooldown aktiv.")
+
+                elif signal.action == "BUY" and not has_position:
+                    trade_nok = min(
+                        MAX_TRADE_NOK,
+                        nok * POSITION_PERCENT / 100.0
+                    )
+
+                    if trade_nok >= MIN_TRADE_NOK:
+                        order_price = ask
+                        amount = trade_nok / order_price
+
+                        if DRY_RUN:
+                            log(
+                                f"DRY RUN BUY | {trade_nok:.2f} NOK | "
+                                f"{amount:.12f} ETH @ {order_price:.2f}"
+                            )
+                        else:
+                            response = await client.post_orders(
+                                MARKET,
+                                "ask",
+                                f"{order_price:.2f}",
+                                f"{amount:.12f}"
+                            )
+                            log(
+                                f"LIVE BUY | {trade_nok:.2f} NOK | "
+                                f"{amount:.12f} ETH @ {order_price:.2f} | "
+                                f"{str(response)[:300]}"
+                            )
+
+                        entry_price = order_price
+                        last_trade_time = time.time()
+                        trades_today += 1
+
+                elif signal.action == "SELL" and has_position:
+                    order_price = bid
+                    amount = eth
+                    trade_nok = amount * order_price
+
+                    if trade_nok >= MIN_TRADE_NOK:
+                        if DRY_RUN:
+                            log(
+                                f"DRY RUN SELL | {trade_nok:.2f} NOK | "
+                                f"{amount:.12f} ETH @ {order_price:.2f}"
+                            )
+                        else:
+                            response = await client.post_orders(
+                                MARKET,
+                                "bid",
+                                f"{order_price:.2f}",
+                                f"{amount:.12f}"
+                            )
+                            log(
+                                f"LIVE SELL | {trade_nok:.2f} NOK | "
+                                f"{amount:.12f} ETH @ {order_price:.2f} | "
+                                f"{str(response)[:300]}"
+                            )
+
+                        pnl = (
+                            ((order_price - entry_price) / entry_price) * 100.0
+                            if entry_price > 0 else 0.0
+                        )
+                        log(f"EXIT | P/L før gebyr: {pnl:+.2f}%")
+
+                        entry_price = 0.0
+                        last_trade_time = time.time()
+                        trades_today += 1
+
+# PORTEFØLJE
                 # =================================================
 
                 eth_value = (
