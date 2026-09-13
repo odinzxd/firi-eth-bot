@@ -42,6 +42,8 @@ state = {
     "trend": "UNKNOWN",
     "signal": "HOLD",
     "reason": "Starter...",
+    "trade_status": "WAITING",
+    "trade_reason": "",
     "position": False,
     "entry_price": 0.0,
     "take_profit": 0.0,
@@ -94,6 +96,9 @@ async def dashboard():
     total_portfolio_nok = state["nok"] + eth_value_nok
     state["eth_value_nok"] = eth_value_nok
     state["total_portfolio_nok"] = total_portfolio_nok
+
+    trade_status = state.get("trade_status", "WAITING")
+    trade_reason = state.get("trade_reason", "")
 
     return f"""
 <!doctype html>
@@ -163,7 +168,8 @@ h1 {{ margin-bottom:25px; }}
 <div class="section card">
 <div class="title">SIGNAL</div>
 <div class="{signal_class}">{signal}</div>
-<div>{state["reason"]}</div>
+<div>TRADE STATUS: {trade_status}</div>
+<div>REASON: {trade_reason or state["reason"]}</div>
 </div>
 
 <div class="section">

@@ -230,17 +230,30 @@ async def main():
             max_trades_reached = daily["trades"] >= MAX_DAILY_TRADES
 
             action = signal.action
+            state["trade_status"] = "READY"
+            state["trade_reason"] = ""
 
             if spread_too_high:
+                state["trade_status"] = "BLOCKED"
+                state["trade_reason"] = (
+                    f"Spread too high ({state['spread_percent']:.2f}%)"
+                )
+                state["reason"] = state["trade_reason"]
                 log(
                     f"HOLD | Firi spread {state['spread_percent']:.2f}% er for høy."
                 )
                 action = "HOLD"
 
             if cooldown_active:
+                state["trade_status"] = "BLOCKED"
+                state["trade_reason"] = "Cooldown active"
+                state["reason"] = state["trade_reason"]
                 action = "HOLD"
 
             if max_trades_reached:
+                state["trade_status"] = "BLOCKED"
+                state["trade_reason"] = "Daily trade limit reached"
+                state["reason"] = state["trade_reason"]
                 action = "HOLD"
 
             # -------------------------------
