@@ -42,6 +42,13 @@ state = {
     "rsi14": None,
     "trend": "UNKNOWN",
     "signal": "HOLD",
+    "claude_signal": "HOLD",
+    "claude_confidence": 0.0,
+    "claude_reason": "",
+    "gemini_signal": "HOLD",
+    "gemini_confidence": 0.0,
+    "gemini_reason": "",
+    "market_condition": "UNCERTAIN",
     "reason": "Starter...",
     "trade_status": "WAITING",
     "trade_reason": "",
@@ -87,7 +94,7 @@ def health(ok: bool):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    signal = state["signal"]
+    signal = state.get("gemini_signal", state.get("claude_signal", state.get("signal", "HOLD")))
     signal_class = (
         "buy" if signal == "BUY"
         else "sell" if signal == "SELL"
@@ -188,7 +195,12 @@ h1 {{ margin-bottom:25px; }}
 <div class="section card">
 <div class="title">SIGNAL</div>
 <div class="{signal_class}">{signal}</div>
+<div>GEMINI SIGNAL: {state.get('gemini_signal', state.get('claude_signal', 'HOLD'))}</div>
+<div>GEMINI CONFIDENCE: {state.get('gemini_confidence', state.get('claude_confidence', 0.0)) * 100:.0f}%</div>
+<div>GEMINI REASON: {state.get('gemini_reason', state.get('claude_reason', '')) or 'Ingen årsak registrert'}</div>
+<div>MARKET CONDITION: {state.get('market_condition', 'UNCERTAIN')}</div>
 <div>TRADE STATUS: {trade_status}</div>
+<div>TRADE BLOCK REASON: {trade_reason or state.get('trade_reason', '')}</div>
 <div>REASON: {trade_reason or state["reason"]}</div>
 </div>
 

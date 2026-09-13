@@ -1,4 +1,5 @@
 aiohttp
+anthropic
 fastapi
 firipy
 python-dotenv
