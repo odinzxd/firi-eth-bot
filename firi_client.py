@@ -40,7 +40,9 @@ class FiriClient:
 
     async def close(self):
         if self.client is not None:
-            await self.client.__aexit__(None, None, None)
+            close_method = getattr(self.client, "close", None)
+            if callable(close_method):
+                close_method()
             self.client = None
 
     async def get_ticker(self) -> Dict[str, float]:
@@ -56,7 +58,7 @@ class FiriClient:
         if self.client is None:
             raise RuntimeError("FiriClient er ikke tilkoblet.")
 
-        ticker = await self.client.markets_market_ticker(self.market)
+        ticker = self.client.markets_market_ticker(self.market)
 
         bid = float(ticker["bid"])
         ask = float(ticker["ask"])
@@ -80,7 +82,7 @@ class FiriClient:
         if self.client is None:
             raise RuntimeError("FiriClient er ikke tilkoblet.")
 
-        raw = await self.client.balances()
+        raw = self.client.balances()
 
         return {
             "NOK": find_balance(raw, "NOK"),
@@ -106,7 +108,7 @@ class FiriClient:
 
         order_type = "bid" if action == "buy" else "ask"
 
-        return await self.client.post_orders(
+        return self.client.post_orders(
             self.market,
             order_type,
             f"{price:.2f}",
