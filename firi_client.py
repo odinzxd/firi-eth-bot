@@ -19,10 +19,6 @@ class FiriClient:
         missing = []
         if not self.api_key:
             missing.append("FIRI_API_KEY")
-        if not self.client_id:
-            missing.append("FIRI_CLIENT_ID")
-        if not self.secret_key:
-            missing.append("FIRI_SECRET_KEY")
 
         if missing and not self.dry_run:
             raise RuntimeError(
@@ -36,12 +32,10 @@ class FiriClient:
             self.client = None
             return self
 
-        self.client = FiriAPI(
-            api_key=self.api_key,
-            secret_key=self.secret_key,
-            client_id=self.client_id,
-        )
-        await self.client.__aenter__()
+        if not self.api_key:
+            raise RuntimeError("Mangler FIRI_API_KEY")
+
+        self.client = FiriAPI(api_key=self.api_key)
         return self
 
     async def close(self):
