@@ -1,1603 +1,391 @@
 import asyncio
-import os
-import threading
-import time
-import traceback
-from datetime import datetime
-
-import uvicorn
-from dotenv import load_dotenv
-from firipy import FiriAPI
-import aiohttp
 import json
+import os
+import time
+from datetime import datetime
+from pathlib import Path
 
-from dashboard import app, state, add_log
+from dotenv import load_dotenv
+
+from dashboard import start_dashboard, state, add_log
+from firi_client import FiriClient
+from market_data import get_binance_candles, get_close_prices, get_latest_binance_price
 from strategy import (
-    STOP_LOSS_PERCENT,
-    TAKE_PROFIT_PERCENT,
     analyze_market,
+    TAKE_PROFIT_PERCENT,
+    STOP_LOSS_PERCENT,
 )
 
-
-# ============================================================
-# MILJØ
-# ============================================================
 
 load_dotenv()
 
 
-# ============================================================
-# API-INNSTILLINGER
-# ============================================================
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+MARKET = os.getenv("MARKET", "ETHNOK")
+MAX_TRADE_NOK = float(os.getenv("MAX_TRADE_NOK", "200"))
+TEST_BUY_NOK = float(os.getenv("TEST_BUY_NOK", str(MAX_TRADE_NOK)))
+MAX_DAILY_TRADES = 10
+COOLDOWN_SECONDS = 600
+LOOP_SECONDS = 30
 
-API_KEY = os.getenv(
-    "FIRI_API_KEY"
-)
-
-CLIENT_ID = os.getenv(
-    "FIRI_CLIENT_ID"
-)
-
-SECRET_KEY = os.getenv(
-    "FIRI_SECRET_KEY"
-)
+POSITION_FILE = Path("position.json")
 
 
-# ============================================================
-# TRADING-INNSTILLINGER
-# ============================================================
-
-MARKET = os.getenv(
-    "MARKET",
-    "ETHNOK"
-)
-
-DRY_RUN = (
-    os.getenv(
-        "DRY_RUN",
-        "true"
-    ).lower()
-    == "true"
-)
-
-MAX_TRADE_NOK = float(
-    os.getenv(
-        "MAX_TRADE_NOK",
-        "200"
-    )
-)
-
-STARTING_CAPITAL_NOK = 1800.0
-
-# Ekte testordrer er avslått til denne variabelen eksplisitt settes til true.
-# Passordet valideres i dashboard.py før en ordre blir lagt i kø.
-TEST_TRADING_ENABLED = (
-    os.getenv(
-        "TEST_TRADING_ENABLED",
-        "false"
-    ).lower()
-    == "true"
-)
-
-def positive_env_float(name, default):
-
-    try:
-
-        value = float(
-            os.getenv(
-                name,
-                str(default)
-            )
-        )
-
-        return value if value > 0 else default
-
-    except ValueError:
-
-        return default
-
-
-# Bruk separate beløp fordi minimum for salg ofte er høyere enn for kjøp.
-TEST_BUY_NOK = positive_env_float("TEST_BUY_NOK", 10.0)
-TEST_SELL_NOK = positive_env_float("TEST_SELL_NOK", 10.0)
-FIRI_MIN_TEST_ORDER_NOK = 10.0
-
-
-# ============================================================
-# TIDSINTERVALLER
-# ============================================================
-
-TICKER_INTERVAL = 5
-
-BALANCE_INTERVAL = 30
-
-HISTORY_INTERVAL = 60
-
-HISTORY_COUNT = 500
-
-MAX_PRICE_HISTORY = 500
-
-
-# ============================================================
-# RISIKO
-# ============================================================
-
-MAX_SPREAD_PERCENT = 0.005
-
-
-# ============================================================
-# FALLBACK / CONFIG
-# ============================================================
-
-FALLBACK_SOURCES = os.getenv(
-    "FALLBACK_SOURCES",
-    "coingecko"
-).lower().split(",")
-
-FALLBACK_DAYS = int(
-    os.getenv(
-        "FALLBACK_DAYS",
-        "2"
-    )
-)
-
-
-# ============================================================
-# DIAGNOSTIKK
-# ============================================================
-
-DEBUG_MODE = True
-
-last_ticker_ok = False
-last_balance_ok = False
-last_history_ok = False
-last_strategy_ok = False
-
-last_error = "Ingen feil"
-
-error_count = 0
-
-
-# ============================================================
-# LOGGING
-# ============================================================
-
-def log(message):
-
-    timestamp = (
-        datetime.now()
-        .strftime("%H:%M:%S")
-    )
-
-    text = (
-        f"[{timestamp}] "
-        f"{message}"
-    )
-
-    print(
-        text,
-        flush=True
-    )
-
+def log(message: str):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    text = f"[{timestamp}] {message}"
+    print(text, flush=True)
     add_log(text)
 
 
-def debug(message):
-
-    if DEBUG_MODE:
-
-        log(
-            f"DEBUG: {message}"
-        )
-
-
-def log_error(
-    location,
-    error
-):
-
-    global error_count
-    global last_error
-
-    error_count += 1
-
-    last_error = (
-        f"{location}: "
-        f"{type(error).__name__}: "
-        f"{error}"
-    )
-
-    log(
-        f"FEIL [{location}]: "
-        f"{type(error).__name__}: "
-        f"{error}"
-    )
-
-    if DEBUG_MODE:
-
-        traceback_text = (
-            traceback.format_exc()
-        )
-
-        log(
-            f"TRACEBACK:\n"
-            f"{traceback_text}"
-        )
-
-
-# ============================================================
-# SALDO
-# ============================================================
-
-def find_balance(
-    balances,
-    currency
-):
-
-    if isinstance(
-        balances,
-        dict
-    ):
-
-        if currency in balances:
-
-            value = balances[currency]
-
-            if isinstance(
-                value,
-                dict
-            ):
-
-                for key in [
-                    "available",
-                    "balance",
-                    "amount",
-                    "free"
-                ]:
-
-                    if key in value:
-
-                        try:
-
-                            return float(
-                                value[key]
-                            )
-
-                        except (
-                            ValueError,
-                            TypeError
-                        ):
-
-                            pass
-
-            try:
-
-                return float(
-                    value
-                )
-
-            except (
-                ValueError,
-                TypeError
-            ):
-
-                pass
-
-        for key in [
-            "balances",
-            "data",
-            "result"
-        ]:
-
-            if key in balances:
-
-                result = find_balance(
-                    balances[key],
-                    currency
-                )
-
-                if result is not None:
-
-                    return result
-
-
-    elif isinstance(
-        balances,
-        list
-    ):
-
-        for item in balances:
-
-            if not isinstance(
-                item,
-                dict
-            ):
-
-                continue
-
-            symbol = (
-                item.get("symbol")
-                or item.get("currency")
-                or item.get("asset")
-                or item.get("code")
-            )
-
-            if (
-                str(symbol).upper()
-                != currency.upper()
-            ):
-
-                continue
-
-            for key in [
-                "available",
-                "balance",
-                "amount",
-                "free",
-                "available_balance"
-            ]:
-
-                if key in item:
-
-                    try:
-
-                        return float(
-                            item[key]
-                        )
-
-                    except (
-                        ValueError,
-                        TypeError
-                    ):
-
-                        pass
-
-    return 0.0
-
-
-# ============================================================
-# HISTORY -> PRIS
-# ============================================================
-
-def extract_trades(
-    data
-):
-
-    trades = []
-
-    def walk(value):
-
-        if isinstance(
-            value,
-            dict
-        ):
-
-            price = None
-            timestamp = None
-
-            for key in [
-                "price",
-                "rate"
-            ]:
-
-                if key in value:
-
-                    try:
-
-                        candidate = float(
-                            value[key]
-                        )
-
-                        if candidate > 0:
-
-                            price = candidate
-                            break
-
-                    except (
-                        ValueError,
-                        TypeError
-                    ):
-
-                        pass
-
-            for key in [
-                "timestamp",
-                "time",
-                "ts",
-                "date"
-            ]:
-
-                if key in value:
-
-                    candidate = value[key]
-
-                    try:
-
-                        timestamp = float(
-                            candidate
-                        )
-
-                        break
-
-                    except (
-                        ValueError,
-                        TypeError
-                    ):
-
-                        # Firi kan returnere ISO-8601-tid, for eksempel
-                        # "2026-09-12T10:15:00Z", i stedet for Unix-tid.
-                        if isinstance(candidate, str):
-
-                            try:
-
-                                timestamp = datetime.fromisoformat(
-                                    candidate.replace("Z", "+00:00")
-                                ).timestamp()
-
-                                break
-
-                            except ValueError:
-
-                                pass
-
-            if (
-                price is not None
-                and timestamp is not None
-            ):
-
-                # Aksepter sekunder, millisekunder og mikrosekunder.
-                while timestamp > 10_000_000_000:
-
-                    timestamp /= 1000.0
-
-                trades.append(
-                    (
-                        timestamp,
-                        price
-                    )
-                )
-
-            for child in value.values():
-
-                if isinstance(
-                    child,
-                    (dict, list)
-                ):
-
-                    walk(child)
-
-        elif isinstance(
-            value,
-            list
-        ):
-
-            for item in value:
-
-                walk(item)
-
-    walk(data)
-
-    trades.sort(
-        key=lambda x: x[0]
-    )
-
-    return trades
-
-
-def count_raw_history_items(data):
-    """Count top-level API items without treating nested fields as trades."""
-    if isinstance(data, list):
-        return len(data)
-    if isinstance(data, dict):
-        for key in ("data", "trades", "history", "result"):
-            if isinstance(data.get(key), list):
-                return len(data[key])
-    return 0
-
-
-def build_minute_history(history):
-    """Convert genuine trades to sorted one-minute closes without filling gaps."""
-
-    trades = extract_trades(
-        history
-    )
-
-    if not trades:
-
-        debug(
-            "History inneholdt "
-            "ingen gjenkjennelige trades."
-        )
-
-        return []
-
-    # Siste trade i et minutt er minutts-candlets close.  Listen nedenfor
-    # fyller også minutter uten handler med forrige close, slik at momentum,
-    # EMA og momentum faktisk måles i minutter og ikke i tilfeldige trades.
-    buckets = {}
-
-    for timestamp, price in trades:
-
-        minute = int(
-            timestamp // 60
-        )
-
-        buckets[minute] = price
-
-    minute_history = sorted(buckets.items())[-MAX_PRICE_HISTORY:]
-
-    debug(
-        f"Raw parsed trades={len(trades)} | "
-        f"unique 1-min candles={len(minute_history)} | "
-        f"range={datetime.fromtimestamp(minute_history[0][0] * 60).isoformat()} -> "
-        f"{datetime.fromtimestamp(minute_history[-1][0] * 60).isoformat()}"
-    )
-
-    return minute_history
-
-
-def merge_minute_history(existing, incoming):
-    """Merge by minute, without duplicate or synthetic datapoints."""
-    merged = {minute: price for minute, price in existing}
-    for minute, price in incoming:
-        if price > 0:
-            merged[minute] = price
-    return sorted(merged.items())[-MAX_PRICE_HISTORY:]
-
-
-# ============================================================
-# MANUELL TESTORDRE
-# ============================================================
-
-async def execute_test_order(
-    client,
-    action,
-    bid,
-    ask,
-    nok,
-    eth
-):
-
-    if not TEST_TRADING_ENABLED:
-
-        state["test_order_status"] = "Testhandel er deaktivert."
-        state["test_order_result"] = ""
-        state["test_order_pending"] = False
-
-        return
-
-    price = ask if action == "buy" else bid
-
-    if price <= 0:
-
-        state["test_order_status"] = "Testordre avbrutt: ugyldig ticker-pris."
-        state["test_order_result"] = ""
-        state["test_order_pending"] = False
-
-        return
-
-    test_trade_nok = (
-        TEST_BUY_NOK
-        if action == "buy"
-        else TEST_SELL_NOK
-    )
-
-    if test_trade_nok < FIRI_MIN_TEST_ORDER_NOK:
-
-        state["test_order_status"] = (
-            "Testordre avbrutt: Firi krever minst "
-            f"{FIRI_MIN_TEST_ORDER_NOK:.2f} kr."
-        )
-        state["test_order_result"] = (
-            "Øk TEST_BUY_NOK eller TEST_SELL_NOK i .env og start botten på nytt."
-        )
-        state["test_order_pending"] = False
-
-        return
-
-    amount = test_trade_nok / price
-
-    if action == "buy" and nok < test_trade_nok:
-
-        state["test_order_status"] = "Testkjøp avbrutt: for lite NOK-saldo."
-        state["test_order_result"] = ""
-        state["test_order_pending"] = False
-
-        return
-
-    if action == "sell" and eth < amount:
-
-        state["test_order_status"] = "Testselg avbrutt: for lite ETH-saldo."
-        state["test_order_result"] = ""
-        state["test_order_pending"] = False
-
-        return
-
-    order_type = "bid" if action == "buy" else "ask"
+def load_position():
+    if not POSITION_FILE.exists():
+        return {
+            "position": False,
+            "entry_price": 0.0,
+            "amount": 0.0,
+            "entry_time": 0.0,
+        }
 
     try:
-
-        response = await client.post_orders(
-            MARKET,
-            order_type,
-            f"{price:.2f}",
-            f"{amount:.12f}"
-        )
-
-        state["test_order_status"] = (
-            f"Test-{action} sendt til Firi: "
-            f"{test_trade_nok:.2f} kr ved {price:.2f} kr."
-        )
-        state["test_order_result"] = str(response)[:500]
-
-        log(
-            f"TESTORDRE sendt | {action.upper()} | "
-            f"{amount:.12f} ETH @ {price:.2f}"
-        )
-
-    except Exception as e:
-
-        state["test_order_status"] = f"Test-{action} ble avvist eller feilet."
-        state["test_order_result"] = str(e)[:500]
-
-        log_error("TEST ORDER", e)
-
-    finally:
-
-        state["test_order_pending"] = False
+        data = json.loads(POSITION_FILE.read_text(encoding="utf-8"))
+        return {
+            "position": bool(data.get("position", False)),
+            "entry_price": float(data.get("entry_price", 0.0)),
+            "amount": float(data.get("amount", 0.0)),
+            "entry_time": float(data.get("entry_time", 0.0)),
+        }
+    except Exception as exc:
+        log(f"POSITION FILE ERROR: {type(exc).__name__}: {exc}")
+        return {
+            "position": False,
+            "entry_price": 0.0,
+            "amount": 0.0,
+            "entry_time": 0.0,
+        }
 
 
-# ============================================================
-# DASHBOARD
-# ============================================================
-
-def start_dashboard():
-
-    try:
-
-        log(
-            "Starter dashboard..."
-        )
-
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=int(
-                os.getenv(
-                    "PORT",
-                    "8080"
-                )
-            ),
-            log_level="warning"
-        )
-
-    except Exception as e:
-
-        log_error(
-            "DASHBOARD",
-            e
-        )
+def save_position(position):
+    POSITION_FILE.write_text(
+        json.dumps(position, indent=2),
+        encoding="utf-8",
+    )
 
 
-# ============================================================
-# HOVEDPROGRAM
-# ============================================================
+def clear_position():
+    if POSITION_FILE.exists():
+        POSITION_FILE.unlink()
 
-# DAYTRADING-INNSTILLINGER
-COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS", "900"))
-MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", "8"))
-MIN_TRADE_NOK = float(os.getenv("MIN_TRADE_NOK", "50"))
-POSITION_PERCENT = float(os.getenv("POSITION_PERCENT", "50"))
+
+def reset_daily_counter_if_needed(state_data):
+    today = datetime.now().date().isoformat()
+
+    if state_data.get("day") != today:
+        state_data["day"] = today
+        state_data["trades"] = 0
+
 
 async def main():
+    state["dry_run"] = DRY_RUN
+    state["max_daily_trades"] = MAX_DAILY_TRADES
 
-    global last_ticker_ok
-    global last_balance_ok
-    global last_history_ok
-    global last_strategy_ok
+    log("======================================")
+    log("FIRI SIMPLE ETH DAYTRADING BOT")
+    log(f"Market: {MARKET}")
+    log(f"DRY_RUN: {DRY_RUN}")
+    log("Analyse: Binance ETHUSDT 5m")
+    log("Strategi: EMA9 / EMA21 / RSI14")
+    log("TP: +1.0% | SL: -0.6%")
+    log("======================================")
 
-    log(
-        "========================================"
-    )
+    daily = {
+        "day": datetime.now().date().isoformat(),
+        "trades": 0,
+        "last_trade": 0.0,
+    }
 
-    log(
-        "FIRI ETH TRADING BOT"
-    )
+    position = load_position()
 
-    log(
-        "========================================"
-    )
+    state["position"] = position["position"]
+    state["entry_price"] = position["entry_price"]
 
-    log(
-        f"Market: {MARKET}"
-    )
-
-    log(
-        f"DRY_RUN: {DRY_RUN}"
-    )
-
-    log(
-        f"Maks handel: "
-        f"{MAX_TRADE_NOK:.2f} kr"
-    )
-
-
-    # ========================================================
-    # TRADING STATUS
-    # ========================================================
-
-    state["trading"] = not DRY_RUN
-
-    if TEST_TRADING_ENABLED:
-
-        state["test_order_status"] = "Klar for passordbeskyttet testhandel."
-
-    else:
-
-        state["test_order_status"] = "Testhandel er deaktivert."
-
-    if DRY_RUN:
-
-        log(
-            "TRADING: OFF - DRY RUN"
-        )
-
-    else:
-
-        log(
-            "TRADING: ON - LIVE"
-        )
-
-        log(
-            "VIKTIG: Ekte ordrelogikk "
-            "er fortsatt deaktivert."
-        )
-
-
-    # ========================================================
-    # API-NØKLER
-    # ========================================================
-
-    if not API_KEY:
-
-        log(
-            "KRITISK: FIRI_API_KEY mangler."
-        )
-
-        state["status"] = "ERROR"
-
-        return
-
-    if not CLIENT_ID:
-
-        log(
-            "KRITISK: FIRI_CLIENT_ID mangler."
-        )
-
-        state["status"] = "ERROR"
-
-        return
-
-    if not SECRET_KEY:
-
-        log(
-            "KRITISK: FIRI_SECRET_KEY mangler."
-        )
-
-        state["status"] = "ERROR"
-
-        return
-
-
-    # ========================================================
-    # DASHBOARD
-    # ========================================================
-
-    dashboard_thread = threading.Thread(
-        target=start_dashboard,
-        daemon=True
-    )
-
-    dashboard_thread.start()
-
-    await asyncio.sleep(2)
-
-
-    # ========================================================
-    # FIRI
-    # ========================================================
+    firi = FiriClient()
 
     try:
+        await firi.connect()
+        state["firi_ok"] = True
+        log("Firi API tilkoblet.")
+    except Exception as exc:
+        state["firi_ok"] = False
+        state["status"] = "ERROR"
+        state["last_error"] = f"FIRI CONNECT: {type(exc).__name__}: {exc}"
+        log(state["last_error"])
+        return
 
-        async with FiriAPI(
-            api_key=API_KEY,
-            secret_key=SECRET_KEY,
-            client_id=CLIENT_ID,
-        ) as client:
+    try:
+        while True:
+            reset_daily_counter_if_needed(daily)
 
-            log(
-                "Firi API tilkoblet."
-            )
-
-
-            # =================================================
-            # API TIME
-            # =================================================
-
+            # -------------------------------
+            # Binance market data
+            # -------------------------------
             try:
+                candles = get_binance_candles()
+                prices = get_close_prices(candles)
+                binance_price = prices[-1]
 
-                api_time = (
-                    await client.time()
+                state["binance_price"] = binance_price
+                state["market_data_ok"] = True
+
+            except Exception as exc:
+                state["market_data_ok"] = False
+                state["strategy_ok"] = False
+                state["last_error"] = (
+                    f"BINANCE: {type(exc).__name__}: {exc}"
+                )
+                log(state["last_error"])
+                await asyncio.sleep(LOOP_SECONDS)
+                continue
+
+            # -------------------------------
+            # Firi ticker + balance
+            # -------------------------------
+            try:
+                ticker = await firi.get_ticker()
+
+                state["price"] = ticker["price"]
+                state["bid"] = ticker["bid"]
+                state["ask"] = ticker["ask"]
+                state["spread_percent"] = ticker["spread_percent"]
+
+                balances = await firi.get_balances()
+
+                state["nok"] = balances["NOK"]
+                state["eth"] = balances["ETH"]
+                state["firi_ok"] = True
+
+            except Exception as exc:
+                state["firi_ok"] = False
+                state["last_error"] = (
+                    f"FIRI: {type(exc).__name__}: {exc}"
+                )
+                log(state["last_error"])
+                await asyncio.sleep(LOOP_SECONDS)
+                continue
+
+            # -------------------------------
+            # Strategy
+            # -------------------------------
+            try:
+                signal = analyze_market(
+                    prices,
+                    current_position=position["position"],
+                    entry_price=position["entry_price"],
                 )
 
-                debug(
-                    f"API time OK: "
-                    f"{api_time}"
+                state["strategy_ok"] = True
+                state["signal"] = signal.action
+                state["reason"] = signal.reason
+                state["ema9"] = signal.ema9
+                state["ema21"] = signal.ema21
+                state["rsi14"] = signal.rsi14
+                state["trend"] = signal.trend
+
+            except Exception as exc:
+                state["strategy_ok"] = False
+                state["last_error"] = (
+                    f"STRATEGY: {type(exc).__name__}: {exc}"
                 )
+                log(state["last_error"])
+                await asyncio.sleep(LOOP_SECONDS)
+                continue
 
-            except Exception as e:
-
-                log_error(
-                    "API TIME",
-                    e
+            # -------------------------------
+            # Position targets
+            # -------------------------------
+            if position["position"] and position["entry_price"] > 0:
+                state["take_profit"] = (
+                    position["entry_price"]
+                    * (1.0 + TAKE_PROFIT_PERCENT / 100.0)
                 )
-
-
-            # =================================================
-            # VARIABLER
-            # =================================================
-
-            price_history = []
-
-            entry_price = float(os.getenv("ENTRY_PRICE", "0"))
-            last_trade_time = 0.0
-            trades_today = 0
-            day_key = datetime.now().date()
-
-            last_history_update = 0
-
-            last_balance_update = 0
-
-            nok = 0.0
-
-            eth = 0.0
-
-            last_price = 0.0
-
-
-            # =================================================
-            # HOVEDLOOP
-            # =================================================
-
-            while True:
-
-                today = datetime.now().date()
-                if today != day_key:
-                    day_key = today
-                    trades_today = 0
-                    log("Ny handelsdag: trade-teller nullstilt.")
-
-                loop_start = (
-                    time.time()
+                state["stop_loss"] = (
+                    position["entry_price"]
+                    * (1.0 - STOP_LOSS_PERCENT / 100.0)
                 )
-
-
-                # =================================================
-                # TICKER
-                # =================================================
-
-                try:
-
-                    ticker = (
-                        await client
-                        .markets_market_ticker(
-                            MARKET
-                        )
-                    )
-
-                    bid = float(
-                        ticker["bid"]
-                    )
-
-                    ask = float(
-                        ticker["ask"]
-                    )
-
-                    spread = float(
-                        ticker["spread"]
-                    )
-
-                    price = (
-                        bid + ask
-                    ) / 2.0
-
-                    spread_percent = (
-                        spread / price
-                        if price > 0
-                        else 0.0
-                    )
-
-                    last_price = price
-
-                    last_ticker_ok = True
-
-                    test_action = state.get("test_order_request")
-
-                    if test_action:
-
-                        state["test_order_request"] = None
-
-                        await execute_test_order(
-                            client,
-                            test_action,
-                            bid,
-                            ask,
-                            nok,
-                            eth
-                        )
-
-                    log(
-                        f"ETH "
-                        f"{price:,.2f} kr | "
-                        f"Spread "
-                        f"{spread_percent * 100:.2f}%"
-                    )
-
-                except Exception as e:
-
-                    last_ticker_ok = False
-
-                    log_error(
-                        "TICKER",
-                        e
-                    )
-
-                    await asyncio.sleep(
-                        TICKER_INTERVAL
-                    )
-
-                    continue
-
-
-                # =================================================
-                # HISTORY
-                # =================================================
-
-                now = time.time()
-
-                if (
-                    now
-                    - last_history_update
-                    >= HISTORY_INTERVAL
-                ):
-
-                    try:
-
-                        debug(
-                            "Henter markedshistorikk..."
-                        )
-
-                        history = (
-                            await client
-                            .markets_market_history(
-                                MARKET,
-                                count=HISTORY_COUNT
-                            )
-                        )
-
-                        debug(
-                            f"History type: "
-                            f"{type(history).__name__}"
-                        )
-
-                        # Skriv rå history-respons til fil for feilsøking
-                        try:
-                            os.makedirs("debug", exist_ok=True)
-                            fname = (
-                                f"debug/history_{int(time.time())}.json"
-                            )
-                            with open(fname, "w", encoding="utf-8") as fh:
-                                try:
-                                    json.dump(history, fh, ensure_ascii=False, indent=2)
-                                    debug(f"Wrote raw history to {fname}")
-                                except TypeError:
-                                    # Noen responser kan ikke serialiseres direkte
-                                    try:
-                                        fh.write(repr(history))
-                                        debug(f"Wrote raw history repr to {fname}")
-                                    except Exception as e:
-                                        debug(f"Could not write history to file: {e}")
-                        except Exception as e:
-                            debug(f"Failed creating debug file: {e}")
-
-                        # Ekstra debug: vis et kort sammendrag av rå history-responsen
-                        try:
-                            if isinstance(history, dict):
-                                debug(
-                                    f"History dict keys: {list(history.keys())}"
-                                )
-                                # Vis eksempel på første nøkkelverdi
-                                first_key = next(iter(history), None)
-                                if first_key is not None:
-                                    sample = history[first_key]
-                                    debug(
-                                        f"Sample for key {first_key}: {type(sample).__name__}"
-                                    )
-
-                            elif isinstance(history, list):
-                                debug(
-                                    f"History list length: {len(history)}"
-                                )
-                                try:
-                                    debug(
-                                        f"History first items: {history[:5]}"
-                                    )
-                                except Exception:
-                                    debug("History sample: (could not stringify items)")
-
-                            else:
-                                debug(
-                                    f"History raw repr (truncated): {str(history)[:1000]}"
-                                )
-
-                        except Exception as e:
-                            debug(f"Could not introspect history: {e}")
-
-                        price_history = (
-                            build_minute_prices(
-                                history
-                            )
-                        )
-
-                        # Hvis Firi ikke ga brukbare priser, prøv fallback-kilder basert på konfigurasjon
-                        if not price_history:
-
-                            debug(
-                                "Firi history tom — prøver konfigurerte fallback-kilder."
-                            )
-
-                            try:
-
-                                async def fetch_coingecko_history(vs_currency: str = "nok", days: int = 2):
-
-                                    url = (
-                                        f"https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency={vs_currency}&days={days}"
-                                    )
-
-                                    async with aiohttp.ClientSession() as session:
-
-                                        async with session.get(url, timeout=10) as resp:
-
-                                            if resp.status != 200:
-
-                                                debug(
-                                                    f"CoinGecko returned status {resp.status}"
-                                                )
-
-                                                return []
-
-                                            data = await resp.json()
-
-                                    prices = data.get("prices", [])
-
-                                    if not prices:
-
-                                        return []
-
-                                    buckets = {}
-
-                                    for ts_ms, price in prices:
-
-                                        ts = ts_ms / 1000.0
-
-                                        minute = int(ts // 60)
-
-                                        buckets[minute] = float(price)
-
-                                    result = [
-                                        buckets[k]
-                                        for k in sorted(buckets.keys())
-                                    ]
-
-                                    return result[-MAX_PRICE_HISTORY:]
-
-                                # Bestem valuta for CoinGecko basert på MARKET (f.eks. ETHNOK -> nok)
-                                vs_currency = (
-                                    "nok"
-                                    if (
-                                        "NOK" in MARKET.upper()
-                                    )
-                                    else "usd"
-                                )
-
-                                if "coingecko" in FALLBACK_SOURCES:
-
-                                    cg_prices = await fetch_coingecko_history(vs_currency, FALLBACK_DAYS)
-
-                                    if cg_prices:
-
-                                        price_history = cg_prices
-
-                                        debug(
-                                            f"CoinGecko fallback OK: {len(price_history)} priser."
-                                        )
-
-                                    else:
-
-                                        debug(
-                                            "CoinGecko fallback ga ingen priser."
-                                        )
-
-                            except Exception as e:
-
-                                debug(
-                                    f"Fallback feil: {e}"
-                                )
-
-                        if len(
-                            price_history
-                        ) >= 60:
-
-                            last_history_ok = True
-
-                            log(
-                                f"History OK: "
-                                f"{len(price_history)} "
-                                f"minuttpriser."
-                            )
-
-                        else:
-
-                            last_history_ok = False
-
-                            log(
-                                f"History: "
-                                f"bare "
-                                f"{len(price_history)} "
-                                f"brukbare priser."
-                            )
-
-                        last_history_update = now
-
-                    except Exception as e:
-
-                        last_history_ok = False
-
-                        log_error(
-                            "HISTORY",
-                            e
-                        )
-
-
-                # =================================================
-                # BALANSER
-                # =================================================
-
-                now = time.time()
-
-                if (
-                    now
-                    - last_balance_update
-                    >= BALANCE_INTERVAL
-                ):
-
-                    try:
-
-                        balances = (
-                            await client.balances()
-                        )
-
-                        nok = find_balance(
-                            balances,
-                            "NOK"
-                        )
-
-                        eth = find_balance(
-                            balances,
-                            "ETH"
-                        )
-
-                        last_balance_ok = True
-
+            else:
+                state["take_profit"] = 0.0
+                state["stop_loss"] = 0.0
+
+            state["position"] = position["position"]
+            state["entry_price"] = position["entry_price"]
+            state["daily_trades"] = daily["trades"]
+
+            # -------------------------------
+            # Safety filters
+            # -------------------------------
+            spread_too_high = state["spread_percent"] > 0.50
+            cooldown_active = (
+                time.time() - daily["last_trade"] < COOLDOWN_SECONDS
+            )
+            max_trades_reached = daily["trades"] >= MAX_DAILY_TRADES
+
+            action = signal.action
+
+            if spread_too_high:
+                log(
+                    f"HOLD | Firi spread {state['spread_percent']:.2f}% er for høy."
+                )
+                action = "HOLD"
+
+            if cooldown_active:
+                action = "HOLD"
+
+            if max_trades_reached:
+                action = "HOLD"
+
+            # -------------------------------
+            # BUY
+            # -------------------------------
+            if action == "BUY" and not position["position"]:
+                if daily["trades"] >= MAX_DAILY_TRADES:
+                    action = "HOLD"
+                else:
+                    trade_nok = min(TEST_BUY_NOK, MAX_TRADE_NOK)
+
+                    if trade_nok <= 0:
+                        log("BUY blokkert: trade-beløp <= 0.")
+                    elif state["nok"] < trade_nok:
                         log(
-                            f"Saldo: "
-                            f"{nok:,.2f} NOK | "
-                            f"{eth:.8f} ETH"
+                            f"BUY blokkert: NOK-saldo {state['nok']:.2f} "
+                            f"< {trade_nok:.2f}."
                         )
-
-                        last_balance_update = now
-
-                    except Exception as e:
-
-                        last_balance_ok = False
-
-                        log_error(
-                            "BALANCE",
-                            e
-                        )
-
-
-                # =================================================
-                # STRATEGI
-                try:
-                    # En ETH-saldo blokkerer alltid et nytt kjøp.  TP/SL trenger
-                    # i tillegg en kjent inngangspris for å kunne beregnes korrekt.
-                    has_eth_position = eth > 0.000001
-                    has_position = has_eth_position and entry_price > 0
-
-                    signal = analyze_market(
-                        price_history,
-                        spread_percent,
-                        has_position=has_position,
-                        entry_price=entry_price,
-                    )
-                    if has_eth_position and not has_position:
-                        signal.action = "HOLD"
-                        signal.reason = "ETH-posisjon finnes, men ENTRY_PRICE mangler; nytt kjøp og automatisk salg er blokkert."
-                    last_strategy_ok = True
-                except Exception as e:
-                    last_strategy_ok = False
-                    log_error("STRATEGY", e)
-                    continue
-
-                # PORTEFØLJE
-                eth_value = eth * price
-                portfolio_value = nok + eth_value
-                profit_nok = portfolio_value - STARTING_CAPITAL_NOK
-                profit_percent = (profit_nok / STARTING_CAPITAL_NOK) * 100.0
-
-                # AUTOMATISK DAYTRADING
-                cooldown_ok = (time.time() - last_trade_time) >= COOLDOWN_SECONDS
-
-                if spread_percent > MAX_SPREAD_PERCENT:
-                    debug("HANDELSSTOPP: spread for høy.")
-
-                elif trades_today >= MAX_TRADES_PER_DAY:
-                    debug(f"HANDELSSTOPP: {MAX_TRADES_PER_DAY} trades/dag nådd.")
-
-                elif not cooldown_ok:
-                    debug("HANDELSSTOPP: cooldown aktiv.")
-
-                elif signal.action == "BUY" and not has_eth_position:
-                    trade_nok = min(
-                        MAX_TRADE_NOK,
-                        nok * POSITION_PERCENT / 100.0
-                    )
-
-                    if trade_nok >= MIN_TRADE_NOK:
-                        order_price = ask
-                        amount = trade_nok / order_price
+                    else:
+                        price = state["ask"]
+                        amount = trade_nok / price
 
                         if DRY_RUN:
                             log(
                                 f"DRY RUN BUY | {trade_nok:.2f} NOK | "
-                                f"{amount:.12f} ETH @ {order_price:.2f}"
+                                f"{amount:.8f} ETH @ {price:.2f} | "
+                                f"{signal.reason}"
                             )
+
+                            position = {
+                                "position": True,
+                                "entry_price": price,
+                                "amount": amount,
+                                "entry_time": time.time(),
+                            }
+                            save_position(position)
+
                         else:
-                            # Firi-klientens eksisterende testordre bruker bid for BUY.
-                            response = await client.post_orders(
-                                MARKET,
-                                "bid",
-                                f"{order_price:.2f}",
-                                f"{amount:.12f}"
-                            )
-                            log(
-                                f"LIVE BUY | {trade_nok:.2f} NOK | "
-                                f"{amount:.12f} ETH @ {order_price:.2f} | "
-                                f"{str(response)[:300]}"
-                            )
+                            try:
+                                response = await firi.place_order(
+                                    "buy",
+                                    price,
+                                    amount,
+                                )
 
-                        entry_price = order_price
-                        last_trade_time = time.time()
-                        trades_today += 1
+                                log(
+                                    f"LIVE BUY sendt | "
+                                    f"{amount:.8f} ETH @ {price:.2f}"
+                                )
+                                log(f"Firi response: {str(response)[:500]}")
 
-                elif signal.action == "SELL" and has_position:
-                    order_price = bid
-                    amount = eth
-                    trade_nok = amount * order_price
+                                position = {
+                                    "position": True,
+                                    "entry_price": price,
+                                    "amount": amount,
+                                    "entry_time": time.time(),
+                                }
+                                save_position(position)
 
-                    if trade_nok >= MIN_TRADE_NOK:
-                        if DRY_RUN:
-                            log(
-                                f"DRY RUN SELL | {trade_nok:.2f} NOK | "
-                                f"{amount:.12f} ETH @ {order_price:.2f}"
-                            )
-                        else:
-                            # Firi-klientens eksisterende testordre bruker ask for SELL.
-                            response = await client.post_orders(
-                                MARKET,
-                                "ask",
-                                f"{order_price:.2f}",
-                                f"{amount:.12f}"
-                            )
-                            log(
-                                f"LIVE SELL | {trade_nok:.2f} NOK | "
-                                f"{amount:.12f} ETH @ {order_price:.2f} | "
-                                f"{str(response)[:300]}"
-                            )
+                            except Exception as exc:
+                                log(
+                                    f"ORDER BUY ERROR: "
+                                    f"{type(exc).__name__}: {exc}"
+                                )
+                                position = load_position()
 
-                        pnl = (
-                            ((order_price - entry_price) / entry_price) * 100.0
-                            if entry_price > 0 else 0.0
-                        )
-                        log(f"EXIT | P/L før gebyr: {pnl:+.2f}%")
+                        daily["trades"] += 1
+                        daily["last_trade"] = time.time()
 
-                        entry_price = 0.0
-                        last_trade_time = time.time()
-                        trades_today += 1
+            # -------------------------------
+            # SELL
+            # -------------------------------
+            elif action == "SELL" and position["position"]:
+                price = state["bid"]
+                amount = position["amount"]
 
-# PORTEFØLJE
-                # =================================================
-
-                eth_value = (
-                    eth * price
-                )
-
-                portfolio_value = (
-                    nok
-                    + eth_value
-                )
-
-                profit_nok = (
-                    portfolio_value
-                    - STARTING_CAPITAL_NOK
-                )
-
-                profit_percent = (
-                    (
-                        profit_nok
-                        / STARTING_CAPITAL_NOK
-                    )
-                    * 100.0
-                )
-
-
-                # =================================================
-                # DASHBOARD DATA
-                # =================================================
-
-                state["price"] = price
-
-                state["bid"] = bid
-
-                state["ask"] = ask
-
-                state["spread"] = spread
-
-                state["nok"] = nok
-
-                state["eth"] = eth
-
-                state["eth_value"] = (
-                    eth_value
-                )
-
-                state["portfolio_value"] = (
-                    portfolio_value
-                )
-
-                state["profit_nok"] = (
-                    profit_nok
-                )
-
-                state["profit_percent"] = (
-                    profit_percent
-                )
-
-                state["signal"] = (
-                    signal.action
-                )
-
-                state["reason"] = (
-                    signal.reason
-                )
-
-                state["ema_fast"] = (
-                    signal.ema_fast
-                )
-
-                state["ema_slow"] = (
-                    signal.ema_slow
-                )
-
-                state["ema_trend"] = (
-                    signal.ema_trend
-                )
-
-                state["rsi"] = (
-                    signal.rsi
-                )
-
-                state["momentum"] = (
-                    signal.momentum
-                )
-
-                state["volatility"] = (
-                    signal.volatility
-                )
-
-                state["estimated_cost_percent"] = (
-                    signal.estimated_cost_percent
-                )
-
-                state["required_move_percent"] = (
-                    signal.required_move_percent
-                )
-
-                state["trend"] = (
-                    signal.trend
-                )
-
-                state["buy_score"] = (
-                    signal.buy_score
-                )
-
-                state["sell_score"] = (
-                    signal.sell_score
-                )
-
-                state["history_points"] = (
-                    len(price_history)
-                )
-
-                state["has_position"] = has_eth_position
-                state["entry_price"] = entry_price if has_position else 0.0
-                state["take_profit_price"] = (
-                    entry_price * (1.0 + TAKE_PROFIT_PERCENT / 100.0)
-                    if has_position else 0.0
-                )
-                state["stop_loss_price"] = (
-                    entry_price * (1.0 - STOP_LOSS_PERCENT / 100.0)
-                    if has_position else 0.0
-                )
-
-                state["last_ticker_ok"] = (
-                    last_ticker_ok
-                )
-
-                state["last_balance_ok"] = (
-                    last_balance_ok
-                )
-
-                state["last_history_ok"] = (
-                    last_history_ok
-                )
-
-                state["last_strategy_ok"] = (
-                    last_strategy_ok
-                )
-
-                state["error_count"] = (
-                    error_count
-                )
-
-                state["last_error"] = (
-                    last_error
-                )
-
-                state["last_update"] = (
-                    datetime.now()
-                    .strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                )
-
-                state["status"] = (
-                    "RUNNING"
-                )
-
-
-                # =================================================
-                # STRATEGI-LOGG
-                # =================================================
-
-                log(
-                    f"INDIKATORER | "
-                    f"EMA9={signal.ema_fast:,.0f} | "
-                    f"EMA21={signal.ema_slow:,.0f} | "
-                    f"EMA50={signal.ema_trend:,.0f} | "
-                    f"RSI={signal.rsi:.1f} | MOM={signal.momentum:+.2f}% | "
-                    f"Trend={signal.trend}"
-                )
-
-
-                log(
-                    f"SCORE | "
-                    f"BUY SCORE={signal.buy_score}/5 | "
-                    f"SELL SCORE={signal.sell_score}/4 | "
-                    f"SIGNAL={signal.action} | Reason={signal.reason}"
-                )
-                # =================================================
-                # HANDELSFILTER
-                # =================================================
-
-                if (
-                    spread_percent
-                    > MAX_SPREAD_PERCENT
-                ):
-
+                if amount <= 0:
+                    log("SELL blokkert: posisjonsmengde er 0.")
+                elif DRY_RUN:
                     log(
-                        "HANDELSSTOPP: "
-                        "Spread for høy."
-                    )
-
-                elif signal.action == "HOLD":
-
-                    debug(
-                        f"HOLD: "
+                        f"DRY RUN SELL | {amount:.8f} ETH @ {price:.2f} | "
                         f"{signal.reason}"
                     )
 
-                elif DRY_RUN:
+                    clear_position()
+                    position = {
+                        "position": False,
+                        "entry_price": 0.0,
+                        "amount": 0.0,
+                        "entry_time": 0.0,
+                    }
 
-                    log(
-                        f"DRY RUN: "
-                        f"Signal "
-                        f"{signal.action}"
-                    )
+                    daily["trades"] += 1
+                    daily["last_trade"] = time.time()
 
                 else:
+                    try:
+                        response = await firi.place_order(
+                            "sell",
+                            price,
+                            amount,
+                        )
 
-                    log(
-                        "LIVE MODE: "
-                        "Ordreutførelse "
-                        "ikke aktivert."
-                    )
+                        log(
+                            f"LIVE SELL sendt | "
+                            f"{amount:.8f} ETH @ {price:.2f}"
+                        )
+                        log(f"Firi response: {str(response)[:500]}")
 
+                        clear_position()
+                        position = {
+                            "position": False,
+                            "entry_price": 0.0,
+                            "amount": 0.0,
+                            "entry_time": 0.0,
+                        }
 
-                # =================================================
-                # VENT
-                # =================================================
+                        daily["trades"] += 1
+                        daily["last_trade"] = time.time()
 
-                elapsed = (
-                    time.time()
-                    - loop_start
-                )
+                    except Exception as exc:
+                        log(
+                            f"ORDER SELL ERROR: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
 
-                sleep_time = max(
-                    0.5,
-                    TICKER_INTERVAL
-                    - elapsed
-                )
+            state["daily_trades"] = daily["trades"]
+            state["last_update"] = datetime.now().strftime("%H:%M:%S")
+            state["status"] = "RUNNING"
+            state["last_error"] = "Ingen feil"
 
-                await asyncio.sleep(
-                    sleep_time
-                )
+            log(
+                f"MARKET | Firi {state['price']:.2f} NOK | "
+                f"Binance {state['binance_price']:.2f} | "
+                f"EMA9 {state['ema9'] or 0:.2f} | "
+                f"EMA21 {state['ema21'] or 0:.2f} | "
+                f"RSI {state['rsi14'] if state['rsi14'] is not None else 0:.1f} | "
+                f"SIGNAL {state['signal']}"
+            )
 
+            await asyncio.sleep(LOOP_SECONDS)
 
-    except Exception as e:
+    finally:
+        await firi.close()
 
-        log_error(
-            "FIRI CONNECTION",
-            e
-        )
-
-        state["status"] = (
-            "ERROR"
-        )
-
-
-# ============================================================
-# START
-# ============================================================
 
 if __name__ == "__main__":
-
-    try:
-
-        asyncio.run(
-            main()
-        )
-
-    except KeyboardInterrupt:
-
-        log(
-            "Bot stoppet."
-        )
-
-    except Exception as e:
-
-        log_error(
-            "MAIN",
-            e
-        )
+    asyncio.run(main())

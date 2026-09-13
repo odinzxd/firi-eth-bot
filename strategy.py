@@ -1,114 +1,153 @@
-"""Indicator calculations and the ETH/NOK day-trading decision rules."""
-
 from dataclasses import dataclass
-import math
 from typing import List, Optional
 
-EMA_FAST, EMA_SLOW, EMA_TREND = 9, 21, 50
-RSI_PERIOD, MOMENTUM_PERIOD, MIN_HISTORY = 14, 5, 100
-MIN_ENTRY_MOVE_PERCENT = 0.45
-BUY_FEE_PERCENT, SELL_FEE_PERCENT, PROFIT_SAFETY_MARGIN_PERCENT = 0.70, 0.70, 0.15
-TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT = 1.80, 0.90
-RSI_BUY_MIN, RSI_BUY_MAX, RSI_SELL = 45.0, 72.0, 38.0
-MAX_SPREAD_PERCENT = 0.005
+
+EMA_FAST = 9
+EMA_SLOW = 21
+RSI_PERIOD = 14
+
+TAKE_PROFIT_PERCENT = 1.0
+STOP_LOSS_PERCENT = 0.6
 
 
 @dataclass
 class Signal:
     action: str
     reason: str
-    score: int = 0
-    ema_fast: Optional[float] = None
-    ema_slow: Optional[float] = None
-    ema_trend: Optional[float] = None
-    momentum: Optional[float] = None
-    volatility: Optional[float] = None
-    rsi: Optional[float] = None
-    estimated_cost_percent: Optional[float] = None
-    required_move_percent: Optional[float] = None
-    trend: str = "WARMING UP"
-    buy_score: Optional[int] = None
-    sell_score: Optional[int] = None
+    ema9: Optional[float] = None
+    ema21: Optional[float] = None
+    rsi14: Optional[float] = None
+    trend: str = "UNKNOWN"
 
 
 def calculate_ema(prices: List[float], period: int) -> Optional[float]:
     if len(prices) < period:
         return None
+
     ema = sum(prices[:period]) / period
     multiplier = 2.0 / (period + 1)
+
     for price in prices[period:]:
-        ema += (price - ema) * multiplier
+        ema = ((price - ema) * multiplier) + ema
+
     return ema
 
 
-def calculate_momentum(prices: List[float], periods: int = MOMENTUM_PERIOD) -> float:
-    if len(prices) <= periods or prices[-periods - 1] <= 0:
-        return 0.0
-    return (prices[-1] / prices[-periods - 1] - 1.0) * 100.0
+def calculate_rsi(prices: List[float], period: int = RSI_PERIOD) -> Optional[float]:
+    if len(prices) < period + 1:
+        return None
+
+    changes = [
+        prices[i] - prices[i - 1]
+        for i in range(1, len(prices))
+    ]
+
+    recent = changes[-period:]
+    gains = [change for change in recent if change > 0]
+    losses = [-change for change in recent if change < 0]
+
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
 
 
-def calculate_volatility(prices: List[float], periods: int = 20) -> float:
-    returns = [((new - old) / old) * 100.0 for old, new in zip(prices[-periods:], prices[-periods + 1:]) if old > 0]
-    if len(returns) < 2:
-        return 0.0
-    average = sum(returns) / len(returns)
-    return math.sqrt(sum((value - average) ** 2 for value in returns) / len(returns))
+def analyze_market(
+    prices: List[float],
+    current_position: bool = False,
+    entry_price: float = 0.0,
+) -> Signal:
+    if len(prices) < EMA_SLOW:
+        return Signal(
+            action="HOLD",
+            reason=f"Venter på markedsdata ({len(prices)}/{EMA_SLOW})",
+        )
 
+    ema9 = calculate_ema(prices, EMA_FAST)
+    ema21 = calculate_ema(prices, EMA_SLOW)
+    rsi = calculate_rsi(prices)
 
-def calculate_rsi(prices: List[float], period: int = RSI_PERIOD) -> float:
-    if len(prices) <= period:
-        return 50.0
-    changes = [prices[index] - prices[index - 1] for index in range(len(prices) - period, len(prices))]
-    gain = sum(max(change, 0.0) for change in changes) / period
-    loss = sum(max(-change, 0.0) for change in changes) / period
-    if loss == 0:
-        return 100.0 if gain > 0 else 50.0
-    return 100.0 - 100.0 / (1.0 + gain / loss)
+    if ema9 is None or ema21 is None or rsi is None:
+        return Signal(
+            action="HOLD",
+            reason="Venter på nok data for EMA/RSI",
+            ema9=ema9,
+            ema21=ema21,
+            rsi14=rsi,
+        )
 
-
-def calculate_round_trip_cost_percent(spread_percent: float) -> float:
-    return BUY_FEE_PERCENT + SELL_FEE_PERCENT + max(0.0, spread_percent) * 100.0
-
-
-def analyze_market(prices: List[float], spread_percent: float = 0.0,
-                   has_position: bool = False, entry_price: float = 0.0) -> Signal:
-    """Return BUY, SELL, or HOLD without placing an order."""
-    if len(prices) < MIN_HISTORY:
-        return Signal("HOLD", f"WARMING UP: {len(prices)}/{MIN_HISTORY} ekte minuttdatapunkter.")
+    if ema9 > ema21:
+        trend = "BULLISH"
+    elif ema9 < ema21:
+        trend = "BEARISH"
+    else:
+        trend = "NEUTRAL"
 
     current = prices[-1]
-    ema_fast = calculate_ema(prices, EMA_FAST) or current
-    ema_slow = calculate_ema(prices, EMA_SLOW) or current
-    ema_trend = calculate_ema(prices, EMA_TREND) or current
-    momentum, volatility, rsi = calculate_momentum(prices), calculate_volatility(prices), calculate_rsi(prices)
-    cost = calculate_round_trip_cost_percent(spread_percent)
-    required_move = max(MIN_ENTRY_MOVE_PERCENT, cost + PROFIT_SAFETY_MARGIN_PERCENT)
-    trend = "BULLISH" if current > ema_slow > ema_trend else "BEARISH" if current < ema_slow < ema_trend else "NEUTRAL"
-    common = dict(ema_fast=ema_fast, ema_slow=ema_slow, ema_trend=ema_trend, momentum=momentum,
-                  volatility=volatility, rsi=rsi, estimated_cost_percent=cost,
-                  required_move_percent=required_move, trend=trend)
 
-    if has_position and entry_price > 0:
-        pnl = (current / entry_price - 1.0) * 100.0
-        exits = [pnl >= TAKE_PROFIT_PERCENT, pnl <= -STOP_LOSS_PERCENT,
-                 ema_fast < ema_slow and momentum < 0, rsi <= RSI_SELL and momentum < 0]
-        sell_score = sum(exits)
-        reasons = [f"Take profit nådd: {pnl:+.2f}%", f"Stop loss nådd: {pnl:+.2f}%",
-                   f"Trend-exit: EMA 9 < EMA 21 og momentum {momentum:+.2f}%",
-                   f"RSI-exit: RSI {rsi:.1f} og negativt momentum"]
-        for triggered, reason in zip(exits, reasons):
-            if triggered:
-                return Signal("SELL", reason, sell_score=sell_score, **common)
-        return Signal("HOLD", f"Posisjon holdes: P/L {pnl:+.2f}%", **common)
+    # Exit first when we already own ETH.
+    if current_position and entry_price > 0:
+        change_percent = ((current - entry_price) / entry_price) * 100.0
 
-    criteria = [ema_fast > ema_slow, current > ema_fast, current > ema_trend,
-                momentum >= MIN_ENTRY_MOVE_PERCENT, RSI_BUY_MIN <= rsi <= RSI_BUY_MAX]
-    buy_score = sum(criteria)
-    if spread_percent > MAX_SPREAD_PERCENT:
-        return Signal("HOLD", f"Spread for høy: {spread_percent * 100:.2f}%", buy_score=buy_score, **common)
-    if required_move > TAKE_PROFIT_PERCENT:
-        return Signal("HOLD", f"Kostnad {cost:.2f}% gjør take-profit utilstrekkelig", buy_score=buy_score, **common)
-    if buy_score >= 4 and trend == "BULLISH" and momentum > 0 and rsi < RSI_BUY_MAX:
-        return Signal("BUY", f"Score {buy_score}/5 – bullish trend, positivt momentum og RSI innenfor kjøpsområdet.",
-                      score=buy_score, buy_score=buy_score, **common)
-    return Signal("HOLD", f"BUY score {buy_score}/5 – ikke nok bekreftelse for BUY.", buy_score=buy_score, **common)
+        if change_percent >= TAKE_PROFIT_PERCENT:
+            return Signal(
+                action="SELL",
+                reason=f"TAKE PROFIT: {change_percent:+.2f}%",
+                ema9=ema9,
+                ema21=ema21,
+                rsi14=rsi,
+                trend=trend,
+            )
+
+        if change_percent <= -STOP_LOSS_PERCENT:
+            return Signal(
+                action="SELL",
+                reason=f"STOP LOSS: {change_percent:+.2f}%",
+                ema9=ema9,
+                ema21=ema21,
+                rsi14=rsi,
+                trend=trend,
+            )
+
+        if ema9 < ema21:
+            return Signal(
+                action="SELL",
+                reason=f"Trend snudde bearish: EMA9 {ema9:.2f} < EMA21 {ema21:.2f}",
+                ema9=ema9,
+                ema21=ema21,
+                rsi14=rsi,
+                trend=trend,
+            )
+
+        return Signal(
+            action="HOLD",
+            reason=f"Holder posisjon. RSI={rsi:.1f}, EMA9 > EMA21",
+            ema9=ema9,
+            ema21=ema21,
+            rsi14=rsi,
+            trend=trend,
+        )
+
+    # Simple entry.
+    if ema9 > ema21 and 50.0 <= rsi <= 70.0:
+        return Signal(
+            action="BUY",
+            reason=f"EMA9 > EMA21 og RSI={rsi:.1f}",
+            ema9=ema9,
+            ema21=ema21,
+            rsi14=rsi,
+            trend=trend,
+        )
+
+    return Signal(
+        action="HOLD",
+        reason=f"Ingen kjøpssignal. Trend={trend}, RSI={rsi:.1f}",
+        ema9=ema9,
+        ema21=ema21,
+        rsi14=rsi,
+        trend=trend,
+    )
