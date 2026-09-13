@@ -161,6 +161,17 @@ h1 {{ margin-bottom:25px; }}
     max-height:400px;
     overflow:auto;
 }}
+.chart-panel {{
+    position:relative;
+    height:420px;
+    min-height:320px;
+    width:100%;
+}}
+#tradeChart {{
+    display:block;
+    width:100% !important;
+    height:100% !important;
+}}
 .error {{
     background:#31171c;
     border:1px solid #693039;
@@ -247,7 +258,9 @@ h1 {{ margin-bottom:25px; }}
 
 <div class="section card">
 <div class="title">TRADING GRAF (ETHUSDT / 24H)</div>
-<canvas id="tradeChart" height="120"></canvas>
+<div class="chart-panel">
+<canvas id="tradeChart"></canvas>
+</div>
 </div>
 
 <div class="section error">
