@@ -269,6 +269,12 @@ async def main():
 
             try:
                 ticker = await firi.get_ticker()
+                if ticker.get("price", 0.0) <= 0 and binance_price > 0:
+                    ticker["price"] = binance_price
+                    ticker["bid"] = binance_price
+                    ticker["ask"] = binance_price
+                    ticker["spread_percent"] = 0.0
+
                 state["price"] = ticker["price"]
                 state["bid"] = ticker["bid"]
                 state["ask"] = ticker["ask"]
