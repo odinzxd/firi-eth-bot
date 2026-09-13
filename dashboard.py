@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 from datetime import datetime
@@ -44,10 +45,16 @@ state = {
     "reason": "Starter...",
     "trade_status": "WAITING",
     "trade_reason": "",
+    "chart_candles": [],
+    "chart_history": [],
     "position": False,
     "entry_price": 0.0,
     "take_profit": 0.0,
     "stop_loss": 0.0,
+    "take_profit_percent": 0.0,
+    "stop_loss_percent": 0.6,
+    "estimated_round_trip_cost": 0.0,
+    "break_even_percent": 0.0,
     "nok": 0.0,
     "eth": 0.0,
     "eth_value_nok": 0.0,
@@ -99,6 +106,8 @@ async def dashboard():
 
     trade_status = state.get("trade_status", "WAITING")
     trade_reason = state.get("trade_reason", "")
+    chart_candles_json = json.dumps(state.get("chart_candles", []))
+    chart_history_json = json.dumps(state.get("chart_history", []))
 
     return f"""
 <!doctype html>
@@ -210,6 +219,10 @@ h1 {{ margin-bottom:25px; }}
 <div class="row"><span>Inngangspris</span><span class="value">{fmt(state["entry_price"])} kr</span></div>
 <div class="row"><span>Take profit</span><span class="value">{fmt(state["take_profit"])} kr</span></div>
 <div class="row"><span>Stop loss</span><span class="value">{fmt(state["stop_loss"])} kr</span></div>
+<div class="row"><span>Estimert round-trip-kostnad</span><span class="value">{fmt(state["estimated_round_trip_cost"], 2)} %</span></div>
+<div class="row"><span>Break-even %</span><span class="value">{fmt(state["break_even_percent"], 2)} %</span></div>
+<div class="row"><span>Take-profit %</span><span class="value">{fmt(state["take_profit_percent"], 2)} %</span></div>
+<div class="row"><span>Stop-loss %</span><span class="value">{fmt(state["stop_loss_percent"], 2)} %</span></div>
 </div>
 
 <div class="section">
@@ -232,6 +245,11 @@ h1 {{ margin-bottom:25px; }}
 </div>
 </div>
 
+<div class="section card">
+<div class="title">TRADING GRAF (ETHUSDT / 24H)</div>
+<canvas id="tradeChart" height="120"></canvas>
+</div>
+
 <div class="section error">
 <div class="title">SISTE FEIL</div>
 {state["last_error"]}
@@ -241,6 +259,218 @@ h1 {{ margin-bottom:25px; }}
 <div class="title">LOGG</div>
 <div class="logs">{logs or "Ingen logger ennå."}</div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+const candles = {chart_candles_json};
+const events = {chart_history_json};
+
+const closeValues = candles.map(c => Number(c.close));
+const timestamps = candles.map(c => Number(c.timestamp));
+
+function computeEma(values, period) {{
+  const result = [];
+  let prev = null;
+  const multiplier = 2 / (period + 1);
+
+  values.forEach((value, index) => {{
+    if (index === 0) {{
+      prev = value;
+      result.push(null);
+      return;
+    }}
+
+    if (index < period) {{
+      prev = ((value - prev) * multiplier) + prev;
+      result.push(null);
+      return;
+    }}
+
+    prev = ((value - prev) * multiplier) + prev;
+    result.push(prev);
+  }});
+
+  return result;
+}}
+
+const ema9 = computeEma(closeValues, 9);
+const ema21 = computeEma(closeValues, 21);
+
+const chartDatasets = [
+  {{
+    label: 'ETHUSDT pris',
+    data: candles.map(c => ({{x: Number(c.timestamp), y: Number(c.close)}})),
+    borderColor: '#67b7ff',
+    backgroundColor: 'rgba(103,183,255,0.12)',
+    borderWidth: 2,
+    pointRadius: 0,
+    fill: false,
+    tension: 0.15,
+  }},
+  {{
+    label: 'EMA9',
+    data: candles.map((c, index) => ({{x: Number(c.timestamp), y: ema9[index]}})).filter(item => item.y !== null),
+    borderColor: '#66d9b5',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.15,
+    fill: false,
+  }},
+  {{
+    label: 'EMA21',
+    data: candles.map((c, index) => ({{x: Number(c.timestamp), y: ema21[index]}})).filter(item => item.y !== null),
+    borderColor: '#f7b267',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.15,
+    fill: false,
+  }},
+];
+
+const markerColors = {{
+  SIGNAL: '#f7c948',
+  EXECUTED: '#2ec27e',
+  BLOCKED: '#ff5d73',
+}};
+
+const eventPoints = events
+  .filter(item => item && Number(item.timestamp) > 0)
+  .map(item => ({{
+    x: Number(item.timestamp),
+    y: Number(item.price || 0),
+    label: `${{item.signal}} ${{item.event_type === 'SIGNAL' ? 'SIGNAL' : item.event_type === 'EXECUTED' ? 'EXECUTED' : 'BLOCKED'}}`,
+    signal: item.signal,
+    eventType: item.event_type,
+    entryPrice: Number(item.entry_price || 0),
+    takeProfit: Number(item.take_profit || 0),
+    stopLoss: Number(item.stop_loss || 0),
+  }}));
+
+const eventDatasets = [
+  {{
+    label: 'BUY SIGNAL',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'BUY' && item.eventType === 'SIGNAL'),
+    pointBackgroundColor: markerColors.SIGNAL,
+    pointRadius: 5,
+    pointStyle: 'triangle',
+    showLine: false,
+  }},
+  {{
+    label: 'SELL SIGNAL',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'SELL' && item.eventType === 'SIGNAL'),
+    pointBackgroundColor: markerColors.SIGNAL,
+    pointRadius: 5,
+    pointStyle: 'triangle',
+    showLine: false,
+  }},
+  {{
+    label: 'BUY EXECUTED',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'BUY' && item.eventType === 'EXECUTED'),
+    pointBackgroundColor: markerColors.EXECUTED,
+    pointRadius: 6,
+    pointStyle: 'circle',
+    showLine: false,
+  }},
+  {{
+    label: 'SELL EXECUTED',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'SELL' && item.eventType === 'EXECUTED'),
+    pointBackgroundColor: markerColors.EXECUTED,
+    pointRadius: 6,
+    pointStyle: 'circle',
+    showLine: false,
+  }},
+  {{
+    label: 'BUY SIGNAL - BLOCKED',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'BUY' && item.eventType === 'BLOCKED'),
+    pointBackgroundColor: markerColors.BLOCKED,
+    pointRadius: 7,
+    pointStyle: 'rectRot',
+    showLine: false,
+  }},
+  {{
+    label: 'SELL SIGNAL - BLOCKED',
+    type: 'scatter',
+    data: eventPoints.filter(item => item.signal === 'SELL' && item.eventType === 'BLOCKED'),
+    pointBackgroundColor: markerColors.BLOCKED,
+    pointRadius: 7,
+    pointStyle: 'rectRot',
+    showLine: false,
+  }},
+];
+
+new Chart(document.getElementById('tradeChart'), {{
+  type: 'line',
+  data: {{
+    datasets: [...chartDatasets, ...eventDatasets],
+  }},
+  options: {{
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {{ mode: 'nearest', intersect: false }},
+    scales: {{
+      x: {{
+        type: 'time',
+        time: {{
+          unit: 'hour',
+          tooltipFormat: 'yyyy-MM-dd HH:mm',
+        }},
+        ticks: {{
+          color: '#dfe7f3',
+        }},
+        title: {{
+          display: true,
+          text: 'Tid',
+          color: '#dfe7f3',
+        }},
+      }},
+      y: {{
+        ticks: {{
+          color: '#dfe7f3',
+        }},
+        title: {{
+          display: true,
+          text: 'ETHUSDT',
+          color: '#dfe7f3',
+        }},
+      }},
+    }},
+    plugins: {{
+      legend: {{
+        labels: {{
+          color: '#e8eaf0',
+        }},
+      }},
+      tooltip: {{
+        callbacks: {{
+          title(context) {{
+            if (!context || !context[0]) return 'Signal';
+            const value = context[0].parsed.x;
+            return new Date(value).toLocaleString('no-NO', {{dateStyle:'medium', timeStyle:'short'}});
+          }},
+          label(context) {{
+            const point = context.raw;
+            if (point && point.signal && point.eventType) {{
+              const eventLabel = `${{point.signal}} ${{point.eventType}}`;
+              const price = point.y ? Number(point.y).toFixed(2) : 'N/A';
+              const entry = point.entryPrice ? ` | Entry: ${{Number(point.entryPrice).toFixed(2)}}` : '';
+              const tp = point.takeProfit ? ` | TP: ${{Number(point.takeProfit).toFixed(2)}}` : '';
+              const sl = point.stopLoss ? ` | SL: ${{Number(point.stopLoss).toFixed(2)}}` : '';
+              return `${{eventLabel}} | Price: ${{price}}${{entry}}${{tp}}${{sl}}`;
+            }}
+            return `${{context.dataset.label}}: ${{Number(context.parsed.y).toFixed(2)}}`;
+          }},
+        }},
+      }},
+    }},
+  }},
+}});
+</script>
 
 </div>
 </body>

@@ -10,6 +10,13 @@ TAKE_PROFIT_PERCENT = 1.0
 STOP_LOSS_PERCENT = 0.6
 
 
+def get_take_profit_percent(
+    expected_cost_percent: float = 0.0,
+    minimum: float = TAKE_PROFIT_PERCENT,
+) -> float:
+    return max(minimum, expected_cost_percent + 0.5)
+
+
 @dataclass
 class Signal:
     action: str
@@ -60,6 +67,8 @@ def analyze_market(
     prices: List[float],
     current_position: bool = False,
     entry_price: float = 0.0,
+    take_profit_percent: float = TAKE_PROFIT_PERCENT,
+    stop_loss_percent: float = STOP_LOSS_PERCENT,
 ) -> Signal:
     if len(prices) < EMA_SLOW:
         return Signal(
@@ -93,7 +102,7 @@ def analyze_market(
     if current_position and entry_price > 0:
         change_percent = ((current - entry_price) / entry_price) * 100.0
 
-        if change_percent >= TAKE_PROFIT_PERCENT:
+        if change_percent >= take_profit_percent:
             return Signal(
                 action="SELL",
                 reason=f"TAKE PROFIT: {change_percent:+.2f}%",
@@ -103,7 +112,7 @@ def analyze_market(
                 trend=trend,
             )
 
-        if change_percent <= -STOP_LOSS_PERCENT:
+        if change_percent <= -stop_loss_percent:
             return Signal(
                 action="SELL",
                 reason=f"STOP LOSS: {change_percent:+.2f}%",

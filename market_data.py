@@ -10,7 +10,7 @@ BINANCE_URLS = [
 ]
 SYMBOL = "ETHUSDT"
 INTERVAL = "5m"
-LIMIT = 200
+LIMIT = 288
 
 
 class MarketDataError(Exception):
