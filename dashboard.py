@@ -67,6 +67,8 @@ state = {
 
     "ema_fast": 0.0,
     "ema_slow": 0.0,
+    "ema_trend": 0.0,
+    "rsi": 50.0,
 
     "momentum": 0.0,
     "volatility": 0.0,
@@ -80,6 +82,12 @@ state = {
 
     # Historikk
     "history_points": 0,
+
+    # Åpen posisjon
+    "has_position": False,
+    "entry_price": 0.0,
+    "take_profit_price": 0.0,
+    "stop_loss_price": 0.0,
 
     # Feilsøking
     "last_ticker_ok": False,
@@ -930,7 +938,7 @@ h1 {{
         <div class="indicator">
 
             <span class="indicator-name">
-                EMA 5
+                EMA 9
             </span>
 
             <span class="indicator-value">
@@ -943,7 +951,7 @@ h1 {{
         <div class="indicator">
 
             <span class="indicator-name">
-                EMA 15
+                EMA 21
             </span>
 
             <span class="indicator-value">
@@ -982,11 +990,50 @@ h1 {{
         <div class="indicator">
 
             <span class="indicator-name">
+                EMA 50
+            </span>
+
+            <span class="indicator-value">
+                {state["ema_trend"]:,.2f} kr
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                RSI 14
+            </span>
+
+            <span class="indicator-value">
+                {state["rsi"]:.1f}
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
                 Volatilitet
             </span>
 
             <span class="indicator-value">
                 {state["volatility"]:.2f}%
+            </span>
+
+        </div>
+
+
+        <div class="indicator">
+
+            <span class="indicator-name">
+                Spread
+            </span>
+
+            <span class="indicator-value">
+                {(state["spread"] / state["price"] * 100.0) if state["price"] > 0 else 0.0:.2f}%
             </span>
 
         </div>
@@ -1031,6 +1078,43 @@ h1 {{
 
         </div>
 
+
+    </div>
+
+</div>
+
+
+<!-- ===================================================== -->
+<!-- POSISJON -->
+<!-- ===================================================== -->
+
+<div class="section">
+
+    <div class="section-title">
+        Posisjon
+    </div>
+
+    <div class="card">
+
+        <div class="indicator">
+            <span class="indicator-name">Status</span>
+            <span class="indicator-value">{"ETH" if state["has_position"] else "Ingen åpen posisjon"}</span>
+        </div>
+
+        <div class="indicator">
+            <span class="indicator-name">Inngangspris</span>
+            <span class="indicator-value">{state["entry_price"]:,.2f} kr</span>
+        </div>
+
+        <div class="indicator">
+            <span class="indicator-name">Take profit</span>
+            <span class="indicator-value">{state["take_profit_price"]:,.2f} kr</span>
+        </div>
+
+        <div class="indicator">
+            <span class="indicator-name">Stop loss</span>
+            <span class="indicator-value">{state["stop_loss_price"]:,.2f} kr</span>
+        </div>
 
     </div>
 

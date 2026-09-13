@@ -12,7 +12,11 @@ import aiohttp
 import json
 
 from dashboard import app, state, add_log
-from strategy import analyze_market
+from strategy import (
+    STOP_LOSS_PERCENT,
+    TAKE_PROFIT_PERCENT,
+    analyze_market,
+)
 
 
 # ============================================================
@@ -1223,7 +1227,10 @@ async def main():
                 # =================================================
                 # STRATEGI
                 try:
-                    has_position = eth > 0.000001 and entry_price > 0
+                    # En ETH-saldo blokkerer alltid et nytt kjøp.  TP/SL trenger
+                    # i tillegg en kjent inngangspris for å kunne beregnes korrekt.
+                    has_eth_position = eth > 0.000001
+                    has_position = has_eth_position and entry_price > 0
 
                     signal = analyze_market(
                         price_history,
@@ -1231,6 +1238,9 @@ async def main():
                         has_position=has_position,
                         entry_price=entry_price,
                     )
+                    if has_eth_position and not has_position:
+                        signal.action = "HOLD"
+                        signal.reason = "ETH-posisjon finnes, men ENTRY_PRICE mangler; nytt kjøp og automatisk salg er blokkert."
                     last_strategy_ok = True
                 except Exception as e:
                     last_strategy_ok = False
@@ -1255,7 +1265,7 @@ async def main():
                 elif not cooldown_ok:
                     debug("HANDELSSTOPP: cooldown aktiv.")
 
-                elif signal.action == "BUY" and not has_position:
+                elif signal.action == "BUY" and not has_eth_position:
                     trade_nok = min(
                         MAX_TRADE_NOK,
                         nok * POSITION_PERCENT / 100.0
@@ -1271,9 +1281,10 @@ async def main():
                                 f"{amount:.12f} ETH @ {order_price:.2f}"
                             )
                         else:
+                            # Firi-klientens eksisterende testordre bruker bid for BUY.
                             response = await client.post_orders(
                                 MARKET,
-                                "ask",
+                                "bid",
                                 f"{order_price:.2f}",
                                 f"{amount:.12f}"
                             )
@@ -1299,9 +1310,10 @@ async def main():
                                 f"{amount:.12f} ETH @ {order_price:.2f}"
                             )
                         else:
+                            # Firi-klientens eksisterende testordre bruker ask for SELL.
                             response = await client.post_orders(
                                 MARKET,
-                                "bid",
+                                "ask",
                                 f"{order_price:.2f}",
                                 f"{amount:.12f}"
                             )
@@ -1395,6 +1407,14 @@ async def main():
                     signal.ema_slow
                 )
 
+                state["ema_trend"] = (
+                    signal.ema_trend
+                )
+
+                state["rsi"] = (
+                    signal.rsi
+                )
+
                 state["momentum"] = (
                     signal.momentum
                 )
@@ -1425,6 +1445,17 @@ async def main():
 
                 state["history_points"] = (
                     len(price_history)
+                )
+
+                state["has_position"] = has_eth_position
+                state["entry_price"] = entry_price if has_position else 0.0
+                state["take_profit_price"] = (
+                    entry_price * (1.0 + TAKE_PROFIT_PERCENT / 100.0)
+                    if has_position else 0.0
+                )
+                state["stop_loss_price"] = (
+                    entry_price * (1.0 - STOP_LOSS_PERCENT / 100.0)
+                    if has_position else 0.0
                 )
 
                 state["last_ticker_ok"] = (
@@ -1469,19 +1500,19 @@ async def main():
 
                 log(
                     f"INDIKATORER | "
-                    f"EMA5 {signal.ema_fast:,.0f} | "
-                    f"EMA15 {signal.ema_slow:,.0f} | "
-                    f"MOM {signal.momentum:+.2f}% | "
-                    f"MIN {signal.required_move_percent:.2f}% | "
-                    f"TREND {signal.trend}"
+                    f"EMA9={signal.ema_fast:,.0f} | "
+                    f"EMA21={signal.ema_slow:,.0f} | "
+                    f"EMA50={signal.ema_trend:,.0f} | "
+                    f"RSI={signal.rsi:.1f} | MOM={signal.momentum:+.2f}% | "
+                    f"Trend={signal.trend}"
                 )
 
 
                 log(
                     f"SCORE | "
-                    f"BUY {signal.buy_score} | "
-                    f"SELL {signal.sell_score} | "
-                    f"Signal {signal.action}"
+                    f"BUY SCORE={signal.buy_score}/5 | "
+                    f"SELL SCORE={signal.sell_score}/4 | "
+                    f"SIGNAL={signal.action} | Reason={signal.reason}"
                 )
                 # =================================================
                 # HANDELSFILTER
