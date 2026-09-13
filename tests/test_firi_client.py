@@ -59,7 +59,7 @@ def test_analyze_market_does_not_sell_on_single_bearish_ema():
 
 
 def test_analyze_market_requires_two_bearish_checks_before_trend_exit():
-    prices = [1000.0] * 40 + [990.0] * 10
+    prices = [1000.0] * 40 + [995.0] * 10
 
     signal = analyze_market(
         prices,

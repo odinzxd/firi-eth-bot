@@ -30,6 +30,8 @@ TEST_BUY_NOK = float(os.getenv("TEST_BUY_NOK", str(MAX_TRADE_NOK)))
 TEST_SELL_NOK = float(os.getenv("TEST_SELL_NOK", str(MAX_TRADE_NOK)))
 TEST_TRADE_PASSWORD = os.getenv("TEST_TRADE_PASSWORD", "")
 TEST_TRADING_ENABLED = os.getenv("TEST_TRADING_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BUY_LIMIT_NOK = TEST_BUY_NOK if TEST_TRADING_ENABLED else MAX_TRADE_NOK
+SELL_LIMIT_NOK = TEST_SELL_NOK if TEST_TRADING_ENABLED else MAX_TRADE_NOK
 FIRI_TRADE_FEE_PERCENT = 0.10
 MAX_DAILY_TRADES = 20
 COOLDOWN_SECONDS = 600
@@ -475,12 +477,18 @@ async def main():
             if action == "BUY" and trade_costs["round_trip_cost_percent"] >= 100.0:
                 action = "HOLD"
                 python_reason = f"Estimated round-trip cost too high: {trade_costs['round_trip_cost_percent']:.2f}%"
-            if action == "BUY" and state["nok"] < MAX_TRADE_NOK:
+            if action == "BUY" and state["nok"] < BUY_LIMIT_NOK:
                 action = "HOLD"
-                python_reason = f"Insufficient NOK balance: {state['nok']:.2f} < {MAX_TRADE_NOK:.2f}"
+                python_reason = f"Insufficient NOK balance: {state['nok']:.2f} < {BUY_LIMIT_NOK:.2f}"
             if action == "SELL" and not position["position"]:
                 action = "HOLD"
                 python_reason = "No active bot position to sell"
+            if action == "SELL" and position["position"] and position["amount"] * state["price"] > SELL_LIMIT_NOK:
+                action = "HOLD"
+                python_reason = (
+                    f"Test sell size exceeds TEST_SELL_NOK: "
+                    f"{position['amount'] * state['price']:.2f} > {SELL_LIMIT_NOK:.2f}"
+                )
 
             if action == "HOLD" and python_reason:
                 state["trade_status"] = "BLOCKED"
@@ -499,7 +507,7 @@ async def main():
                 state["reason"] = "HOLD"
 
             if action == "BUY" and not position["position"] and not pending_buy_order:
-                trade_nok = min(MAX_TRADE_NOK, state["nok"])
+                trade_nok = min(BUY_LIMIT_NOK, state["nok"])
                 if trade_nok <= 0:
                     state["trade_status"] = "BLOCKED"
                     state["trade_reason"] = "Trade amount is zero or negative"
@@ -625,7 +633,7 @@ async def main():
                 state["reason"] = state["trade_reason"]
 
             if action == "BUY" and not position["position"] and not pending_buy_order:
-                trade_nok = min(TEST_BUY_NOK, MAX_TRADE_NOK)
+                trade_nok = min(BUY_LIMIT_NOK, MAX_TRADE_NOK)
                 if daily["trades"] >= MAX_DAILY_TRADES:
                     state["trade_status"] = "BLOCKED"
                     state["trade_reason"] = "Daily trade limit reached"
@@ -696,6 +704,14 @@ async def main():
 
                 if amount <= 0:
                     log("SELL blokkert: posisjonsmengde er 0.")
+                elif TEST_TRADING_ENABLED and position["amount"] * price > SELL_LIMIT_NOK:
+                    state["trade_status"] = "BLOCKED"
+                    state["trade_reason"] = (
+                        f"Test sell size exceeds TEST_SELL_NOK: "
+                        f"{position['amount'] * price:.2f} > {SELL_LIMIT_NOK:.2f}"
+                    )
+                    state["reason"] = state["trade_reason"]
+                    log(f"SELL blokkert: {state['trade_reason']}")
                 else:
                     pnl_percent = ((price - position["entry_price"]) / position["entry_price"]) * 100.0
                     log_sell_decision(
