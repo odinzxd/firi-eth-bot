@@ -2,6 +2,7 @@ import os
 
 from bot import calculate_trade_costs
 from firi_client import FiriClient
+from strategy import analyze_market
 
 
 def test_firi_client_allows_missing_credentials_in_dry_run(monkeypatch):
@@ -22,3 +23,34 @@ def test_calculate_trade_costs_includes_spread_and_fees():
     assert estimate["round_trip_cost_percent"] == 3.2
     assert estimate["break_even_percent"] == 3.2
     assert estimate["take_profit_percent"] == 3.7
+
+
+def test_analyze_market_does_not_sell_on_single_bearish_ema():
+    prices = [1000.0] * 30 + [995.0] * 10
+
+    signal = analyze_market(
+        prices,
+        current_position=True,
+        entry_price=1000.0,
+        take_profit_percent=1.0,
+        stop_loss_percent=0.6,
+    )
+
+    assert signal.action == "HOLD"
+    assert "Trend" in signal.reason or "Holder" in signal.reason
+
+
+def test_analyze_market_requires_two_bearish_checks_before_trend_exit():
+    prices = [1000.0] * 40 + [990.0] * 10
+
+    signal = analyze_market(
+        prices,
+        current_position=True,
+        entry_price=1000.0,
+        take_profit_percent=1.0,
+        stop_loss_percent=0.6,
+        bearish_trend_exit_streak=2,
+    )
+
+    assert signal.action == "SELL"
+    assert "Trend" in signal.reason or "EMA9" in signal.reason

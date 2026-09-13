@@ -20,14 +20,15 @@ from strategy import (
 
 load_dotenv()
 
-
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+# Safety: this bot is intended to stay in dry-run mode unless explicitly changed.
+os.environ["DRY_RUN"] = "true"
+DRY_RUN = True
 MARKET = os.getenv("MARKET", "ETHNOK")
 MAX_TRADE_NOK = float(os.getenv("MAX_TRADE_NOK", "200"))
 TEST_BUY_NOK = float(os.getenv("TEST_BUY_NOK", str(MAX_TRADE_NOK)))
 FIRI_TRADE_FEE_PERCENT = 0.10
 MAX_DAILY_TRADES = 20
-COOLDOWN_SECONDS = 30
+COOLDOWN_SECONDS = 600
 LOOP_SECONDS = 30
 
 
@@ -81,6 +82,17 @@ def log_buy_signal(signal, trade_costs, status: str, reason: str = ""):
     log(f"TRADE STATUS: {status}")
     if reason:
         log(f"Reason: {reason}")
+
+
+def log_sell_decision(position, current_bid, pnl_percent, ema9, ema21, rsi, sell_reason):
+    log("SELL DECISION")
+    log(f"ENTRY PRICE {position['entry_price']:.2f}")
+    log(f"CURRENT BID {current_bid:.2f}")
+    log(f"P/L % {pnl_percent:+.2f}%")
+    log(f"EMA9 {ema9:.2f}")
+    log(f"EMA21 {ema21:.2f}")
+    log(f"RSI {rsi:.1f}")
+    log(f"SELL REASON {sell_reason}")
 
 POSITION_FILE = Path("position.json")
 HISTORY_FILE = Path("trade_history.json")
@@ -210,6 +222,8 @@ async def main():
     }
 
     position = load_position()
+    pending_buy_order = None
+    pending_sell_order = None
 
     state["position"] = position["position"]
     state["entry_price"] = position["entry_price"]
@@ -231,202 +245,204 @@ async def main():
         while True:
             reset_daily_counter_if_needed(daily)
 
-            # -------------------------------
-            # Binance market data
-            # -------------------------------
             try:
                 candles = get_binance_candles(limit=288)
                 prices = get_close_prices(candles)
                 binance_price = prices[-1]
-
                 state["chart_candles"] = candles
                 state["binance_price"] = binance_price
                 state["market_data_ok"] = True
-
             except Exception as exc:
                 state["market_data_ok"] = False
                 state["strategy_ok"] = False
-                state["last_error"] = (
-                    f"BINANCE: {type(exc).__name__}: {exc}"
-                )
+                state["last_error"] = f"BINANCE: {type(exc).__name__}: {exc}"
                 log(state["last_error"])
                 await asyncio.sleep(LOOP_SECONDS)
                 continue
 
-            # -------------------------------
-            # Firi ticker + balance
-            # -------------------------------
             try:
                 ticker = await firi.get_ticker()
-
                 state["price"] = ticker["price"]
                 state["bid"] = ticker["bid"]
                 state["ask"] = ticker["ask"]
                 state["spread_percent"] = ticker["spread_percent"]
 
                 balances = await firi.get_balances()
-
                 state["nok"] = balances["NOK"]
                 state["eth"] = balances["ETH"]
                 state["firi_ok"] = True
-
             except Exception as exc:
                 state["firi_ok"] = False
-                state["last_error"] = (
-                    f"FIRI: {type(exc).__name__}: {exc}"
-                )
+                state["last_error"] = f"FIRI: {type(exc).__name__}: {exc}"
                 log(state["last_error"])
                 await asyncio.sleep(LOOP_SECONDS)
                 continue
 
-            # -------------------------------
-            # Strategy
-            # -------------------------------
-            try:
-                signal = analyze_market(
-                    prices,
-                    current_position=position["position"],
-                    entry_price=position["entry_price"],
-                )
-
-                if signal.action in {"BUY", "SELL"}:
-                    signal_timestamp = candles[-1]["timestamp"]
-                    record_trade_event(
-                        signal=signal.action,
-                        event_type="SIGNAL",
-                        price=binance_price,
-                        timestamp=signal_timestamp,
-                        entry_price=state.get("entry_price", 0.0),
-                        take_profit=state.get("take_profit", 0.0),
-                        stop_loss=state.get("stop_loss", 0.0),
+            if pending_buy_order is not None and not position["position"]:
+                current_eth = balances["ETH"]
+                if current_eth >= pending_buy_order["previous_eth"] + pending_buy_order["amount"] * 0.95:
+                    position = {
+                        "position": True,
+                        "entry_price": pending_buy_order["entry_price"],
+                        "amount": pending_buy_order["amount"],
+                        "entry_time": time.time(),
+                    }
+                    save_position(position)
+                    pending_buy_order = None
+                    state["pending_buy_order"] = None
+                    log(
+                        f"BUY CONFIRMED: {pending_buy_order['amount']:.8f} ETH @ {pending_buy_order['entry_price']:.2f}"
                     )
+                    if not DRY_RUN:
+                        daily["trades"] += 1
+                        daily["last_trade"] = time.time()
+                elif time.time() - pending_buy_order["submitted_at"] > 120:
+                    log("BUY order not confirmed within timeout; leaving position inactive.")
+                    pending_buy_order = None
+                    state["pending_buy_order"] = None
 
-                state["strategy_ok"] = True
-                state["signal"] = signal.action
-                state["reason"] = signal.reason
-                state["ema9"] = signal.ema9
-                state["ema21"] = signal.ema21
-                state["rsi14"] = signal.rsi14
-                state["trend"] = signal.trend
+            if pending_sell_order is not None and position["position"]:
+                current_eth = balances["ETH"]
+                if current_eth <= pending_sell_order["previous_eth"] - pending_sell_order["amount"] * 0.95:
+                    clear_position()
+                    position = {
+                        "position": False,
+                        "entry_price": 0.0,
+                        "amount": 0.0,
+                        "entry_time": 0.0,
+                    }
+                    pending_sell_order = None
+                    state["pending_sell_order"] = None
+                    log(
+                        f"SELL CONFIRMED: ETH reduced by {pending_sell_order['amount']:.8f}"
+                    )
+                    if not DRY_RUN:
+                        daily["trades"] += 1
+                        daily["last_trade"] = time.time()
+                elif time.time() - pending_sell_order["submitted_at"] > 120:
+                    log("SELL order not confirmed within timeout; keeping position open.")
+                    pending_sell_order = None
+                    state["pending_sell_order"] = None
 
-            except Exception as exc:
-                state["strategy_ok"] = False
-                state["last_error"] = (
-                    f"STRATEGY: {type(exc).__name__}: {exc}"
-                )
-                log(state["last_error"])
-                await asyncio.sleep(LOOP_SECONDS)
-                continue
-
-            # -------------------------------
-            # Position targets
-            # -------------------------------
             trade_costs = calculate_trade_costs(
                 ask_price=state["ask"],
                 bid_price=state["bid"],
             )
-            state["estimated_round_trip_cost"] = trade_costs[
-                "round_trip_cost_percent"
-            ]
+            state["estimated_round_trip_cost"] = trade_costs["round_trip_cost_percent"]
             state["break_even_percent"] = trade_costs["break_even_percent"]
             state["take_profit_percent"] = trade_costs["take_profit_percent"]
             state["stop_loss_percent"] = trade_costs["stop_loss_percent"]
 
             if position["position"] and position["entry_price"] > 0:
-                target_take_profit = get_take_profit_percent(
-                    trade_costs["round_trip_cost_percent"]
+                state["take_profit"] = position["entry_price"] * (
+                    1.0 + get_take_profit_percent(trade_costs["round_trip_cost_percent"]) / 100.0
                 )
-                state["take_profit"] = (
-                    position["entry_price"]
-                    * (1.0 + target_take_profit / 100.0)
+                state["stop_loss"] = position["entry_price"] * (
+                    1.0 - STOP_LOSS_PERCENT / 100.0
                 )
-                state["stop_loss"] = (
-                    position["entry_price"]
-                    * (1.0 - STOP_LOSS_PERCENT / 100.0)
-                )
+                state["pnl_percent"] = (
+                    (state["bid"] - position["entry_price"]) / position["entry_price"]
+                ) * 100.0
             else:
                 state["take_profit"] = 0.0
                 state["stop_loss"] = 0.0
+                state["pnl_percent"] = 0.0
 
             state["position"] = position["position"]
             state["entry_price"] = position["entry_price"]
             state["daily_trades"] = daily["trades"]
 
-            # -------------------------------
-            # Safety filters
-            # -------------------------------
-            cooldown_active = (
-                time.time() - daily["last_trade"] < COOLDOWN_SECONDS
-            )
-            max_trades_reached = daily["trades"] >= MAX_DAILY_TRADES
+            signal = None
+            bearish_trend_exit_streak = int(state.get("bearish_trend_exit_streak", 0))
+            previous_ema9 = state.get("ema9")
+            previous_ema21 = state.get("ema21")
+            if previous_ema9 is not None and previous_ema21 is not None:
+                if previous_ema9 < previous_ema21:
+                    bearish_trend_exit_streak += 1
+                else:
+                    bearish_trend_exit_streak = 0
+            else:
+                bearish_trend_exit_streak = 0
 
+            try:
+                signal = analyze_market(
+                    prices,
+                    current_position=position["position"],
+                    entry_price=position["entry_price"],
+                    current_price=state["bid"],
+                    bearish_trend_exit_streak=bearish_trend_exit_streak,
+                )
+            except Exception as exc:
+                state["strategy_ok"] = False
+                state["last_error"] = f"STRATEGY: {type(exc).__name__}: {exc}"
+                log(state["last_error"])
+                await asyncio.sleep(LOOP_SECONDS)
+                continue
+
+            if signal.action == "SELL" and position["position"]:
+                pnl_percent = ((state["bid"] - position["entry_price"]) / position["entry_price"]) * 100.0
+                log_sell_decision(
+                    position,
+                    state["bid"],
+                    pnl_percent,
+                    signal.ema9 or 0.0,
+                    signal.ema21 or 0.0,
+                    signal.rsi14 if signal.rsi14 is not None else 0.0,
+                    signal.reason,
+                )
+
+            state["strategy_ok"] = True
+            state["signal"] = signal.action
+            state["reason"] = signal.reason
+            state["ema9"] = signal.ema9
+            state["ema21"] = signal.ema21
+            state["rsi14"] = signal.rsi14
+            state["trend"] = signal.trend
+            state["bearish_trend_exit_streak"] = bearish_trend_exit_streak
+            state["sell_reason"] = signal.reason if signal.action == "SELL" else ""
+
+            cooldown_active = time.time() - daily["last_trade"] < COOLDOWN_SECONDS
+            max_trades_reached = daily["trades"] >= MAX_DAILY_TRADES
             action = signal.action
             state["trade_status"] = "READY"
             state["trade_reason"] = ""
-            buy_block_reason = ""
 
             if cooldown_active:
+                action = "HOLD"
                 state["trade_status"] = "BLOCKED"
                 state["trade_reason"] = "Cooldown active"
                 state["reason"] = state["trade_reason"]
-                buy_block_reason = state["trade_reason"]
-                action = "HOLD"
 
             if max_trades_reached:
+                action = "HOLD"
                 state["trade_status"] = "BLOCKED"
                 state["trade_reason"] = "Daily trade limit reached"
                 state["reason"] = state["trade_reason"]
-                buy_block_reason = state["trade_reason"]
-                action = "HOLD"
 
-            # -------------------------------
-            # BUY
-            # -------------------------------
-            if action == "BUY" and not position["position"]:
+            if action == "BUY" and not position["position"] and not pending_buy_order:
                 trade_nok = min(TEST_BUY_NOK, MAX_TRADE_NOK)
-                trade_status = "READY"
-                reason = ""
-
                 if daily["trades"] >= MAX_DAILY_TRADES:
-                    trade_status = "BLOCKED"
-                    reason = "Daily trade limit reached"
-                    action = "HOLD"
+                    state["trade_status"] = "BLOCKED"
+                    state["trade_reason"] = "Daily trade limit reached"
+                    state["reason"] = state["trade_reason"]
                 elif trade_nok <= 0:
-                    trade_status = "BLOCKED"
-                    reason = "Trade amount is zero or negative"
-                    action = "HOLD"
+                    state["trade_status"] = "BLOCKED"
+                    state["trade_reason"] = "Trade amount is zero or negative"
+                    state["reason"] = state["trade_reason"]
                 elif state["nok"] < trade_nok:
-                    trade_status = "BLOCKED"
-                    reason = (
-                        f"Insufficient NOK balance: {state['nok']:.2f} < "
-                        f"{trade_nok:.2f}"
-                    )
-                    action = "HOLD"
+                    state["trade_status"] = "BLOCKED"
+                    state["trade_reason"] = f"Insufficient NOK balance: {state['nok']:.2f} < {trade_nok:.2f}"
+                    state["reason"] = state["trade_reason"]
                 elif trade_costs["round_trip_cost_percent"] >= 100.0:
-                    trade_status = "BLOCKED"
-                    reason = (
-                        f"Expected cost too high: "
-                        f"{trade_costs['round_trip_cost_percent']:.2f}%"
-                    )
-                    action = "HOLD"
+                    state["trade_status"] = "BLOCKED"
+                    state["trade_reason"] = f"Expected cost too high: {trade_costs['round_trip_cost_percent']:.2f}%"
+                    state["reason"] = state["trade_reason"]
                 else:
                     price = state["ask"]
                     amount = trade_nok / price
-                    state["take_profit_percent"] = trade_costs[
-                        "take_profit_percent"
-                    ]
-                    state["stop_loss_percent"] = STOP_LOSS_PERCENT
-                    trade_status = "READY"
-                    reason = ""
-
+                    log_buy_signal(signal, trade_costs, "READY")
                     if DRY_RUN:
-                        log_buy_signal(signal, trade_costs, "READY")
-                        log(
-                            f"DRY RUN BUY | {trade_nok:.2f} NOK | "
-                            f"{amount:.8f} ETH @ {price:.2f} | "
-                            f"{signal.reason}"
-                        )
-
+                        log(f"DRY RUN BUY | {trade_nok:.2f} NOK | {amount:.8f} ETH @ {price:.2f} | {signal.reason}")
                         position = {
                             "position": True,
                             "entry_price": price,
@@ -443,111 +459,51 @@ async def main():
                             take_profit=price * (1.0 + trade_costs["take_profit_percent"] / 100.0),
                             stop_loss=price * (1.0 - STOP_LOSS_PERCENT / 100.0),
                         )
-
+                        daily["trades"] += 1
+                        daily["last_trade"] = time.time()
                     else:
-                        try:
-                            response = await firi.place_order(
-                                "buy",
-                                price,
-                                amount,
-                            )
-
-                            log_buy_signal(signal, trade_costs, "READY")
-                            log(
-                                f"LIVE BUY sendt | "
-                                f"{amount:.8f} ETH @ {price:.2f}"
-                            )
-                            log(f"Firi response: {str(response)[:500]}")
-
-                            position = {
-                                "position": True,
-                                "entry_price": price,
-                                "amount": amount,
-                                "entry_time": time.time(),
-                            }
-                            save_position(position)
-                            record_trade_event(
-                                signal="BUY",
-                                event_type="EXECUTED",
-                                price=binance_price,
-                                timestamp=candles[-1]["timestamp"],
-                                entry_price=price,
-                                take_profit=price * (1.0 + trade_costs["take_profit_percent"] / 100.0),
-                                stop_loss=price * (1.0 - STOP_LOSS_PERCENT / 100.0),
-                            )
-
-                        except Exception as exc:
-                            log(
-                                f"ORDER BUY ERROR: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
-                            position = load_position()
-
-                    daily["trades"] += 1
-                    daily["last_trade"] = time.time()
-
-                if trade_status == "BLOCKED":
-                    state["trade_status"] = "BLOCKED"
-                    state["trade_reason"] = reason
-                    state["reason"] = reason
-                    log_buy_signal(signal, trade_costs, "BLOCKED", reason)
-                    record_trade_event(
-                        signal=signal.action,
-                        event_type="BLOCKED",
-                        price=binance_price,
-                        timestamp=candles[-1]["timestamp"],
-                        entry_price=state.get("entry_price", 0.0),
-                        take_profit=state.get("take_profit", 0.0),
-                        stop_loss=state.get("stop_loss", 0.0),
-                    )
-                    action = "HOLD"
-                else:
+                        response = await firi.place_order("buy", price, amount)
+                        log(f"LIVE BUY sendt | {amount:.8f} ETH @ {price:.2f}")
+                        log(f"Firi response: {str(response)[:500]}")
+                        log("BUY order accepted by Firi; waiting for actual ETH balance confirmation before activating position.")
+                        pending_buy_order = {
+                            "submitted_at": time.time(),
+                            "amount": amount,
+                            "entry_price": price,
+                            "previous_eth": balances["ETH"],
+                        }
+                        state["pending_buy_order"] = pending_buy_order
+                        record_trade_event(
+                            signal="BUY",
+                            event_type="SUBMITTED",
+                            price=binance_price,
+                            timestamp=candles[-1]["timestamp"],
+                            entry_price=price,
+                            take_profit=price * (1.0 + trade_costs["take_profit_percent"] / 100.0),
+                            stop_loss=price * (1.0 - STOP_LOSS_PERCENT / 100.0),
+                        )
                     state["trade_status"] = "READY"
                     state["trade_reason"] = ""
 
-            # -------------------------------
-            # SELL
-            # -------------------------------
-            elif action == "SELL" and position["position"]:
+            elif action == "SELL" and position["position"] and not pending_sell_order:
                 price = state["bid"]
                 amount = position["amount"]
 
                 if amount <= 0:
                     log("SELL blokkert: posisjonsmengde er 0.")
-                elif DRY_RUN:
-                    log(
-                        f"DRY RUN SELL | {amount:.8f} ETH @ {price:.2f} | "
-                        f"{signal.reason}"
-                    )
-                    record_trade_event(
-                        signal="SELL",
-                        event_type="EXECUTED",
-                        price=binance_price,
-                        timestamp=candles[-1]["timestamp"],
-                        entry_price=position["entry_price"],
-                        take_profit=state.get("take_profit", 0.0),
-                        stop_loss=state.get("stop_loss", 0.0),
-                    )
-
-                    clear_position()
-                    position = {
-                        "position": False,
-                        "entry_price": 0.0,
-                        "amount": 0.0,
-                        "entry_time": 0.0,
-                    }
-
-                    daily["trades"] += 1
-                    daily["last_trade"] = time.time()
-
                 else:
-                    try:
-                        response = await firi.place_order(
-                            "sell",
-                            price,
-                            amount,
-                        )
-
+                    pnl_percent = ((price - position["entry_price"]) / position["entry_price"]) * 100.0
+                    log_sell_decision(
+                        position,
+                        price,
+                        pnl_percent,
+                        signal.ema9 or 0.0,
+                        signal.ema21 or 0.0,
+                        signal.rsi14 if signal.rsi14 is not None else 0.0,
+                        signal.reason,
+                    )
+                    if DRY_RUN:
+                        log(f"DRY RUN SELL | {amount:.8f} ETH @ {price:.2f} | {signal.reason}")
                         record_trade_event(
                             signal="SELL",
                             event_type="EXECUTED",
@@ -557,12 +513,6 @@ async def main():
                             take_profit=state.get("take_profit", 0.0),
                             stop_loss=state.get("stop_loss", 0.0),
                         )
-                        log(
-                            f"LIVE SELL sendt | "
-                            f"{amount:.8f} ETH @ {price:.2f}"
-                        )
-                        log(f"Firi response: {str(response)[:500]}")
-
                         clear_position()
                         position = {
                             "position": False,
@@ -570,14 +520,28 @@ async def main():
                             "amount": 0.0,
                             "entry_time": 0.0,
                         }
-
                         daily["trades"] += 1
                         daily["last_trade"] = time.time()
-
-                    except Exception as exc:
-                        log(
-                            f"ORDER SELL ERROR: "
-                            f"{type(exc).__name__}: {exc}"
+                    else:
+                        response = await firi.place_order("sell", price, amount)
+                        log(f"LIVE SELL sendt | {amount:.8f} ETH @ {price:.2f}")
+                        log(f"Firi response: {str(response)[:500]}")
+                        log("SELL order accepted by Firi; waiting for actual ETH balance reduction before clearing position.")
+                        pending_sell_order = {
+                            "submitted_at": time.time(),
+                            "amount": amount,
+                            "entry_price": position["entry_price"],
+                            "previous_eth": balances["ETH"],
+                        }
+                        state["pending_sell_order"] = pending_sell_order
+                        record_trade_event(
+                            signal="SELL",
+                            event_type="SUBMITTED",
+                            price=binance_price,
+                            timestamp=candles[-1]["timestamp"],
+                            entry_price=position["entry_price"],
+                            take_profit=state.get("take_profit", 0.0),
+                            stop_loss=state.get("stop_loss", 0.0),
                         )
 
             state["daily_trades"] = daily["trades"]
@@ -598,6 +562,10 @@ async def main():
 
     finally:
         await firi.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 if __name__ == "__main__":

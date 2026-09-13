@@ -69,6 +69,8 @@ def analyze_market(
     entry_price: float = 0.0,
     take_profit_percent: float = TAKE_PROFIT_PERCENT,
     stop_loss_percent: float = STOP_LOSS_PERCENT,
+    current_price: Optional[float] = None,
+    bearish_trend_exit_streak: int = 0,
 ) -> Signal:
     if len(prices) < EMA_SLOW:
         return Signal(
@@ -96,7 +98,7 @@ def analyze_market(
     else:
         trend = "NEUTRAL"
 
-    current = prices[-1]
+    current = prices[-1] if current_price is None else current_price
 
     # Exit first when we already own ETH.
     if current_position and entry_price > 0:
@@ -122,10 +124,13 @@ def analyze_market(
                 trend=trend,
             )
 
-        if ema9 < ema21:
+        if ema9 < ema21 and bearish_trend_exit_streak >= 2:
             return Signal(
                 action="SELL",
-                reason=f"Trend snudde bearish: EMA9 {ema9:.2f} < EMA21 {ema21:.2f}",
+                reason=(
+                    f"Trend exit: EMA9 {ema9:.2f} < EMA21 {ema21:.2f} "
+                    f"for {bearish_trend_exit_streak} analyser i rad"
+                ),
                 ema9=ema9,
                 ema21=ema21,
                 rsi14=rsi,
@@ -134,7 +139,7 @@ def analyze_market(
 
         return Signal(
             action="HOLD",
-            reason=f"Holder posisjon. RSI={rsi:.1f}, EMA9 > EMA21",
+            reason=f"Holder posisjon. RSI={rsi:.1f}, EMA9 >= EMA21",
             ema9=ema9,
             ema21=ema21,
             rsi14=rsi,
